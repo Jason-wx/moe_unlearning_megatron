@@ -1,6 +1,6 @@
 import torch
 from typing import Dict, Any
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from transformers import Trainer, TrainingArguments
 
 from trainer.base import FinetuneTrainer
@@ -29,7 +29,7 @@ def _register_trainer(trainer_class):
 
 
 def load_trainer_args(trainer_args: DictConfig, dataset):
-    trainer_args = dict(trainer_args)
+    trainer_args = OmegaConf.to_container(trainer_args, resolve=True)
     warmup_epochs = trainer_args.pop("warmup_epochs", None)
     if warmup_epochs:
         batch_size = trainer_args["per_device_train_batch_size"]

@@ -11,8 +11,6 @@ class SatImp(GradDiff):
         self.beta2 = beta2
         self.gamma = gamma
         self.alpha = alpha
-        if self.ref_model is None:
-            self.ref_model = self._prepare_ref_model(self.model)
 
     def compute_loss(
         self, model, inputs, return_outputs=False, num_items_in_batch=None

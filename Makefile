@@ -1,14 +1,16 @@
-.PHONY: quality style
+.PHONY: quality style test
 
-check_dirs := scripts src #setup.py
+PYTHON ?= envs/open-unlearning/bin/python
+RUFF_CACHE_DIR ?= /tmp/open-unlearning-ruff
+check_dirs := src/open_unlearning src/megatron_unlearning src/data/build_document_chunk_cache.py tests
 
 quality:
-	ruff check $(check_dirs) setup.py setup_data.py
-	ruff format --check $(check_dirs) setup.py setup_data.py
+	PYTHONPATH=src RUFF_CACHE_DIR=$(RUFF_CACHE_DIR) $(PYTHON) -m ruff check $(check_dirs)
+	PYTHONPATH=src RUFF_CACHE_DIR=$(RUFF_CACHE_DIR) $(PYTHON) -m ruff format --check $(check_dirs)
 
 style:
-	ruff check $(check_dirs) setup.py setup_data.py --fix
-	ruff format $(check_dirs) setup.py setup_data.py
+	PYTHONPATH=src RUFF_CACHE_DIR=$(RUFF_CACHE_DIR) $(PYTHON) -m ruff check $(check_dirs) --fix
+	PYTHONPATH=src RUFF_CACHE_DIR=$(RUFF_CACHE_DIR) $(PYTHON) -m ruff format $(check_dirs)
 
 test:
-	CUDA_VISIBLE_DEVICES= pytest tests/
+	PYTHONPATH=src $(PYTHON) -m unittest discover -s tests -v

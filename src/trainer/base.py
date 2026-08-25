@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional, Union
 
 from torch.utils.data import Dataset
@@ -16,12 +17,75 @@ _EVAL_PLACEHOLDER = "_EVAL_PLACEHOLDER"
 
 
 class FinetuneTrainer(Trainer):
-    def __init__(self, evaluators=None, template_args=None, *args, **kwargs):
+    def __init__(
+        self,
+        evaluators=None,
+        template_args=None,
+        trainable_param_mode=None,
+        log_trainable_params=True,
+        *args,
+        **kwargs,
+    ):
         self.evaluators = evaluators
         self.template_args = template_args
+        if trainable_param_mode is not None:
+            self._configure_trainable_parameters(
+                kwargs["model"], trainable_param_mode, log_trainable_params
+            )
         if kwargs.get("eval_dataset") is None and evaluators:
             kwargs["eval_dataset"] = _EVAL_PLACEHOLDER
         super().__init__(*args, **kwargs)
+
+    @staticmethod
+    def _configure_trainable_parameters(model, mode, log_trainable_params):
+        if mode != "moe_experts":
+            raise ValueError(f"Unsupported trainable_param_mode: {mode}")
+
+        model_type = str(getattr(getattr(model, "config", None), "model_type", ""))
+        is_gemma4 = "gemma4" in model_type.lower() or "gemma4" in type(model).__name__.lower()
+        if is_gemma4:
+            # Gemma 4 exposes sparse experts under `.experts` and its shared/dense
+            # expert as the ordinary `.mlp` branch.
+            patterns = (
+                r"model\.language_model\.layers\.\d+\.experts\.(gate_up_proj|down_proj)",
+                r"model\.language_model\.layers\.\d+\.mlp\.(gate_proj|up_proj|down_proj)\.weight",
+            )
+        else:
+            # Qwen3.5 and Intern-S2 share the same MoE parameter layout. Deliberately
+            # exclude `gate` and `shared_expert_gate`, which are routers, not experts.
+            patterns = (
+                r"model\.language_model\.layers\.\d+\.mlp\.experts\.(gate_up_proj|down_proj)",
+                r"model\.language_model\.layers\.\d+\.mlp\.shared_expert\.(gate_proj|up_proj|down_proj)\.weight",
+            )
+
+        compiled = tuple(re.compile(pattern) for pattern in patterns)
+        matched = []
+        total_numel = 0
+        trainable_numel = 0
+        for name, parameter in model.named_parameters():
+            parameter.requires_grad = any(pattern.fullmatch(name) for pattern in compiled)
+            total_numel += parameter.numel()
+            if parameter.requires_grad:
+                matched.append(name)
+                trainable_numel += parameter.numel()
+
+        if not matched:
+            raise ValueError(
+                f"No parameters matched trainable_param_mode={mode}; "
+                f"model_type={model_type}, patterns={patterns}"
+            )
+        if log_trainable_params:
+            logger.info(
+                "Expert-only training enabled: %d tensors, %d/%d parameters trainable (%.4f%%).",
+                len(matched),
+                trainable_numel,
+                total_numel,
+                100.0 * trainable_numel / total_numel,
+            )
+            for name in matched[:80]:
+                logger.info("trainable expert: %s", name)
+            if len(matched) > 80:
+                logger.info("... %d more trainable expert tensors omitted", len(matched) - 80)
 
     def evaluate(
         self,

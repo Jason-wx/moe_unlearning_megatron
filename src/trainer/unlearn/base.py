@@ -44,10 +44,11 @@ class UnlearnTrainer(FinetuneTrainer):
 
         if model is not None:
             if hasattr(model, "config"):
+                model_config = getattr(model.config, "text_config", model.config)
                 hidden_size = (
-                    max(model.config.hidden_sizes)
-                    if getattr(model.config, "hidden_sizes", None)
-                    else getattr(model.config, "hidden_size", None)
+                    max(model_config.hidden_sizes)
+                    if getattr(model_config, "hidden_sizes", None)
+                    else getattr(model_config, "hidden_size", None)
                 )
                 if (
                     hidden_size is not None

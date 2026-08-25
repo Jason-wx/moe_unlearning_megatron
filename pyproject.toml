@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-unlearning"
+version = "0.2.0"
+description = "Dual-backend LLM unlearning with DeepSpeed and Megatron-Core"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = {text = "MIT"}
+dependencies = [
+  "hydra-core>=1.3,<1.4",
+  "hydra-colorlog>=1.2,<1.3",
+  "omegaconf>=2.3,<2.4",
+  "PyYAML>=6,<7",
+  "numpy>=2.2,<2.3",
+  "torch>=2.7,<2.8",
+  "transformers>=5.5,<5.6",
+  "accelerate>=1.14,<1.15",
+  "datasets>=4.8,<4.9",
+  "wandb>=0.21.4,<0.29",
+  "tqdm>=4.66,<5",
+]
+
+[project.optional-dependencies]
+deepspeed = ["deepspeed==0.15.4"]
+megatron = [
+  "megatron-core==0.16.1",
+  "mcore-bridge==1.6.1",
+  "transformer-engine[core_cu12,pytorch]==2.11.0",
+]
+eval = [
+  "lm-eval>=0.4.9",
+  "rouge-score==0.1.2",
+  "scipy>=1.14,<1.15",
+  "scikit-learn>=1.5,<1.6",
+]
+quantization = ["bitsandbytes>=0.44,<0.45"]
+dev = ["pytest>=8,<9", "ruff>=0.9,<1"]
+
+[project.scripts]
+ou = "open_unlearning.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = [
+  "open_unlearning*",
+  "megatron_unlearning*",
+  "data*",
+  "evals*",
+  "model*",
+  "trainer*",
+  "qwen_moe_rmu*",
+  "gemma_moe_rmu*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

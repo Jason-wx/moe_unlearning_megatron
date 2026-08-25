@@ -1,0 +1,5 @@
+data:
+  name: wmdp_bio
+  forget_cache: ${OU_CACHE_ROOT}/qwen35_wmdp_bio_max1024_stride1024/forget
+  retain_cache: ${OU_CACHE_ROOT}/qwen35_fineweb_edu_5b_max1024_stride1024
+  sequence_length: 1024

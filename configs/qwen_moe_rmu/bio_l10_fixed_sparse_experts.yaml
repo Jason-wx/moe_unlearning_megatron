@@ -1,0 +1,13 @@
+# @package _global_
+
+defaults:
+  - bio_l10_fixed
+  - _self_
+
+task_name: qwen35_moe_rmu_bio_l10_fixed_sparse_experts
+
+trainer:
+  method_args:
+    trainable_params_regex:
+      - model\.language_model\.layers\.(7|8|9)\.mlp\.experts\.(gate_up_proj|down_proj)
+      - model\.language_model\.layers\.(7|8|9)\.mlp\.shared_expert\.(gate_proj|up_proj|down_proj)\.weight

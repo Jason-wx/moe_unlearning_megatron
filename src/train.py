@@ -1,3 +1,5 @@
+import os
+
 import hydra
 from omegaconf import DictConfig
 from data import get_data, get_collators
@@ -58,8 +60,9 @@ def main(cfg: DictConfig):
 
     if trainer_args.do_train:
         trainer.train()
-        trainer.save_state()
-        trainer.save_model(trainer_args.output_dir)
+        if os.getenv("SKIP_FINAL_SAVE", "false").lower() not in {"1", "true", "yes"}:
+            trainer.save_state()
+            trainer.save_model(trainer_args.output_dir)
 
     if trainer_args.do_eval:
         trainer.evaluate(metric_key_prefix="eval")

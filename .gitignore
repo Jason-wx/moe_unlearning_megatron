@@ -1,4 +1,16 @@
-# custom .gitignore
+# Runtime assets are preserved on cluster storage but never committed.
+/envs/
+/data_cache/
+/saves/
+/outputs/
+/wandb/
+/wandb_offline/
+/runtime/
+/scripts/**/logs/
+/scripts/**/rjob_logs/
+/evaluations/**/lm_eval_results_*/
+
+# Legacy project rules
 submit.py
 !src/data/__init__.py
 logs/
@@ -13,6 +25,7 @@ saves*/
 notebooks/
 output*/
 wandb/
+wandb_offline/
 data/
 !*/data/ 
 evals/

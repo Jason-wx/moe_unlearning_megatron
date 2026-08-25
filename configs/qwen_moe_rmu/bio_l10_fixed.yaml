@@ -1,0 +1,57 @@
+# @package _global_
+
+defaults:
+  - unlearn
+  - _self_
+
+task_name: qwen35_moe_rmu_bio_l10_fixed
+
+model_path: /mnt/shared-storage-gpfs2/gpfs2-shared-public/huggingface/zskj-hub/models-Qwen-Qwen3.5-35B-A3B-Base
+wmdp_data_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/data/wmdp
+data_split: bio
+
+# Human-facing "第 10 层" corresponds to 0-indexed model.language_model.layers.9.
+hook_layer: 9
+train_layers_regex: 7|8|9
+
+data:
+  forget:
+    WMDP_forget:
+      args:
+        max_length: 1024
+        stride: null
+        min_length: 1
+        drop_last: false
+        tokenize_batch_size: 64
+  retain:
+    WMDP_retain:
+      args:
+        max_length: 1024
+        stride: null
+        min_length: 1
+        drop_last: false
+        tokenize_batch_size: 64
+
+trainer:
+  args:
+    per_device_train_batch_size: 8
+    per_device_eval_batch_size: 1
+    gradient_accumulation_steps: 2
+    gradient_checkpointing: false
+    learning_rate: 1e-5
+    max_steps: -1
+    num_train_epochs: 1
+    warmup_steps: 0
+    logging_steps: 1
+    save_strategy: epoch
+    save_total_limit: 1
+    seed: 42
+  method_args:
+    alpha: 350.0
+    steering_coeff: 300.0
+    control_norm_mode: fixed
+    control_scale_coeff: 1.0
+    module_regex: model\.language_model\.layers\.9
+    trainable_params_regex:
+      - model\.language_model\.layers\.(7|8|9)\.mlp\.experts\.(gate_up_proj|down_proj)
+      - model\.language_model\.layers\.(7|8|9)\.mlp\.shared_expert\.(gate_proj|up_proj|down_proj)\.weight

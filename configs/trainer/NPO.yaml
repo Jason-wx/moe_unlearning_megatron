@@ -1,9 +1,10 @@
 defaults:
-  - GradDiff
+  - finetune
 
 handler: NPO
+args:
+  learning_rate: 1.0e-6
+  max_grad_norm: 1.0
 method_args:
   beta: 0.1
-  alpha: 1.0
   gamma: 1.0
-  retain_loss_type: NLL

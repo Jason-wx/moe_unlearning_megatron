@@ -1,5 +1,5 @@
 WMDP_retain:
-  handler: PretrainingDataset
+  handler: DocumentChunkDataset
   args:
     hf_args:
       path: "text"

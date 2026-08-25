@@ -1,0 +1,8 @@
+algorithm:
+  name: satimp
+  deepspeed_trainer: SatImp
+  beta1: 5.0
+  beta2: 1.0
+  gamma: 1.0
+  alpha: 0.1
+  retain_loss_type: NLL

@@ -1,0 +1,3 @@
+# Optional Megatron backend for Python 3.11 / torch 2.7.
+# Exact backend versions live in pyproject.toml.
+-e .[megatron]

@@ -1,0 +1,6 @@
+algorithm:
+  name: grad_diff
+  deepspeed_trainer: GradDiff
+  gamma: 1.0
+  alpha: 1.0
+  retain_loss_type: NLL

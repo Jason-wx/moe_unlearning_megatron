@@ -1,0 +1,7 @@
+model:
+  name: interns2
+  hydra_name: Intern-S2-base05
+  path: ${INTERNS2_MODEL_PATH:-/mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/Intern-S2-base05}
+  handler: AutoModelForMultimodalLM
+  num_experts: 256
+  trust_remote_code: true

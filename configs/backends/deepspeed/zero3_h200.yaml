@@ -1,0 +1,11 @@
+backends:
+  deepspeed:
+    enabled: true
+    world_size: 8
+    micro_batch_size: 4
+    accelerate_config: configs/accelerate/zero_stage3_8gpu.yaml
+    optimizer: adamw_torch
+    gradient_checkpointing: true
+    # RMU and preference-data DPO/AltPO retain their specialized legacy entry
+    # points until their model/data loaders are folded into this adapter.
+    supported_algorithms: [grad_ascent, grad_diff, npo, simnpo, wga, satimp, ceu, pdu, undial]

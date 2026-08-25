@@ -1,0 +1,14 @@
+model_handler: AutoModelForMultimodalLM
+model_args:
+  pretrained_model_name_or_path: /mnt/shared-storage-gpfs2/gpfs2-shared-public/huggingface/zskj-hub/models--google--gemma-4-26B-A4B
+  torch_dtype: bfloat16
+  trust_remote_code: true
+tokenizer_args:
+  pretrained_model_name_or_path: /mnt/shared-storage-gpfs2/gpfs2-shared-public/huggingface/zskj-hub/models--google--gemma-4-26B-A4B
+  trust_remote_code: true
+template_args:
+  apply_chat_template: false
+  user_start_tag: "Question: "
+  user_end_tag: "\n"
+  asst_start_tag: "Answer: "
+  asst_end_tag: "\n\n"

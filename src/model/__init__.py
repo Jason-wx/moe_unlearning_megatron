@@ -46,7 +46,18 @@ def get_model(model_cfg: DictConfig):
     tokenizer_args = model_cfg.tokenizer_args
     torch_dtype = get_dtype(model_args)
     model_handler = model_cfg.get("model_handler", "AutoModelForCausalLM")
-    model_cls = MODEL_REGISTRY[model_handler]
+    model_cls = MODEL_REGISTRY.get(model_handler)
+    if model_cls is None:
+        # New multimodal causal LMs (Qwen3.5/Gemma4) are registered in newer
+        # Transformers releases and should not require a framework code change.
+        import transformers
+
+        model_cls = getattr(transformers, model_handler, None)
+    if model_cls is None:
+        raise ValueError(
+            f"transformers.{model_handler} is unavailable; install a Transformers "
+            "build that supports this checkpoint."
+        )
     with open_dict(model_args):
         model_path = model_args.pop("pretrained_model_name_or_path", None)
     try:
@@ -61,6 +72,9 @@ def get_model(model_cfg: DictConfig):
         raise ValueError(
             f"Error {e} while fetching model using {model_handler}.from_pretrained()."
         )
+    model.config.use_cache = False
+    if hasattr(model.config, "text_config"):
+        model.config.text_config.use_cache = False
     tokenizer = get_tokenizer(tokenizer_args)
     return model, tokenizer
 

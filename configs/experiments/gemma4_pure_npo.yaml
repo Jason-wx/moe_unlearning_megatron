@@ -1,0 +1,18 @@
+defaults:
+  model: gemma4
+  dataset: gemma4_wmdp_bio
+  algorithm: pure_npo
+  profile: wmdp_moe_default
+  backends:
+    deepspeed: zero3_h200
+    megatron: tp4_pp2_ep4_h200
+
+name: gemma4-pure-npo-wmdp-bio
+backends:
+  deepspeed:
+    micro_batch_size: 4
+  megatron:
+    micro_batch_size: 16
+training:
+  learning_rate: 1.0e-6
+  output_dir: ${OU_CHECKPOINT_ROOT}/gemma4-pure-npo-wmdp-bio

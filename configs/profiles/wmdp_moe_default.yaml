@@ -1,0 +1,18 @@
+training:
+  global_batch_size: 128
+  train_steps: -1
+  num_train_epochs: 1
+  learning_rate: 5.0e-6
+  weight_decay: 0.0
+  min_learning_rate: 0.0
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-8
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: moe_experts
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_dir: ${OU_CHECKPOINT_ROOT}/example
