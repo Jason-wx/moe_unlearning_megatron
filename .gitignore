@@ -8,7 +8,6 @@
 /runtime/
 /scripts/**/logs/
 /scripts/**/rjob_logs/
-/evaluations/**/lm_eval_results_*/
 
 # Legacy project rules
 submit.py
