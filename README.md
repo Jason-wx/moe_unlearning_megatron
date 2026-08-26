@@ -9,6 +9,8 @@ Qwen3.5 MoE、Intern-S2、Gemma 4 适配，并同时维护两个训练后端：
 两套后端共享模型、数据、算法和训练配置；只有 micro batch、TP/PP/EP 等后端细节
 分别配置。Megatron 是当前主流路径，DeepSpeed 入口继续作为一等公民保留。
 
+正式训练请直接参考：[Megatron 完整训练流程](RUNBOOK.md)。
+
 ## 快速开始
 
 ```bash
