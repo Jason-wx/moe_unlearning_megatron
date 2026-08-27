@@ -58,6 +58,8 @@ class ParallelConfig:
     expert_tensor_parallel: int | None = 1
     sequence_parallel: bool = True
     use_distributed_optimizer: bool = True
+    num_layers_in_first_pipeline_stage: int | None = None
+    num_layers_in_last_pipeline_stage: int | None = None
 
     def layout(self, *, num_experts: int) -> ParallelLayout:
         return ParallelLayout(
@@ -70,6 +72,18 @@ class ParallelConfig:
             sequence_parallel=self.sequence_parallel,
             num_experts=num_experts,
         ).validate()
+
+    def validate_pipeline_partition(self) -> None:
+        uneven = (
+            self.num_layers_in_first_pipeline_stage,
+            self.num_layers_in_last_pipeline_stage,
+        )
+        if all(value is None for value in uneven):
+            return
+        if self.pipeline_parallel <= 1:
+            raise ValueError("uneven pipeline stages require pipeline_parallel > 1")
+        if any(value is not None and value <= 0 for value in uneven):
+            raise ValueError("uneven pipeline layer counts must be positive")
 
 
 @dataclass(frozen=True)
@@ -192,6 +206,7 @@ class MegatronRunConfig:
                     "for sequence-parallel activation masks"
                 )
         self.reference.validate()
+        self.parallel.validate_pipeline_partition()
 
         layout = self.parallel.layout(num_experts=self.model.num_experts)
         data_parallel = layout.data_parallel_size

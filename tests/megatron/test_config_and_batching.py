@@ -85,6 +85,32 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(layout.data_parallel_size, 1)
         self.assertEqual(layout.expert_data_parallel_size, 1)
 
+    def test_valid_uneven_six_gpu_pipeline_layout(self):
+        mapping = self._mapping()
+        mapping["parallel"].update(
+            world_size=6,
+            tensor_parallel=2,
+            pipeline_parallel=3,
+            expert_parallel=2,
+            num_layers_in_first_pipeline_stage=7,
+            num_layers_in_last_pipeline_stage=30,
+        )
+        mapping["training"].update(micro_batch_size=16, global_batch_size=128)
+        config = from_mapping(mapping)
+        layout = config.validate(check_paths=False)
+        self.assertEqual(layout.data_parallel_size, 1)
+        self.assertEqual(config.parallel.num_layers_in_first_pipeline_stage, 7)
+        self.assertEqual(config.parallel.num_layers_in_last_pipeline_stage, 30)
+
+    def test_uneven_pipeline_requires_multiple_stages(self):
+        mapping = self._mapping()
+        mapping["parallel"].update(
+            pipeline_parallel=1,
+            num_layers_in_first_pipeline_stage=8,
+        )
+        with self.assertRaisesRegex(ValueError, "pipeline_parallel > 1"):
+            from_mapping(mapping).validate(check_paths=False)
+
     def test_grad_diff_requires_retain(self):
         mapping = self._mapping()
         mapping["algorithm"]["name"] = "grad_diff"
@@ -412,6 +438,7 @@ class RMUHookTest(unittest.TestCase):
             self.layer_number = layer_number
             self.mlp = torch.nn.Module()
             self.mlp.experts = torch.nn.Linear(2, 2)
+            self.mlp.shared_experts = torch.nn.Linear(2, 2)
             self.self_attention = torch.nn.Linear(2, 2)
 
     class FakeMCoreModel(torch.nn.Module):
@@ -440,8 +467,16 @@ class RMUHookTest(unittest.TestCase):
         )
         trainable = {name for name, value in model.named_parameters() if value.requires_grad}
         self.assertTrue(trainable)
-        self.assertTrue(all("mlp.experts" in name for name in trainable))
+        self.assertTrue(any("mlp.experts" in name for name in trainable))
+        self.assertTrue(any("mlp.shared_experts" in name for name in trainable))
+        self.assertTrue(
+            all(
+                "mlp.experts" in name or "mlp.shared_experts" in name
+                for name in trainable
+            )
+        )
         self.assertTrue(all("decoder.layers.3" not in name for name in trainable))
+        self.assertTrue(all("self_attention" not in name for name in trainable))
 
     def test_wrapped_model_finds_nested_decoder(self):
         model = self.WrappedMCoreModel()
@@ -457,7 +492,11 @@ class RMUHookTest(unittest.TestCase):
         trainable = {name for name, value in model.named_parameters() if value.requires_grad}
         self.assertTrue(trainable)
         self.assertTrue(
-            all("language_model.decoder.layers.2.mlp.experts" in name for name in trainable)
+            all(
+                "language_model.decoder.layers.2.mlp.experts" in name
+                or "language_model.decoder.layers.2.mlp.shared_experts" in name
+                for name in trainable
+            )
         )
 
     def test_local_mask_uses_sequence_first_activation(self):

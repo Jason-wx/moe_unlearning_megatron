@@ -1,0 +1,34 @@
+defaults:
+  model: interns2
+  dataset: interns2_wmdp_bio
+  algorithm: rmu
+  profile: deepspeed_aligned_npo
+  backends:
+    deepspeed: zero3_h200
+    megatron: tp4_pp2_ep4_h200
+
+name: interns2-rmu-wmdp-bio-lr1e5-layers8-10
+backends:
+  deepspeed:
+    micro_batch_size: 4
+  megatron:
+    micro_batch_size: 16
+training:
+  global_batch_size: 128
+  train_steps: 1344
+  num_train_epochs: 1
+  learning_rate: 1.0e-5
+  weight_decay: 0.0
+  min_learning_rate: 0.0
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-8
+  gradient_clip: 0.0
+  seed: 42
+  bf16: true
+  # User-facing layers 8, 9, 10 are zero-based model layers 7, 8, 9.
+  trainable_param_mode: rmu_experts
+  save_every_epoch: true
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_dir: ${OU_CHECKPOINT_ROOT}/interns2-rmu-wmdp-bio-lr1e5-layers8-10

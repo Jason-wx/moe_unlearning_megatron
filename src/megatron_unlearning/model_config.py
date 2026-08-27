@@ -41,11 +41,45 @@ def build_mcore_config_dict(run: MegatronRunConfig) -> dict[str, Any]:
         params_dtype=torch.bfloat16 if run.training.bf16 else torch.float32,
         pipeline_dtype=torch.bfloat16 if run.training.bf16 else torch.float32,
     )
+    if run.parallel.num_layers_in_first_pipeline_stage is not None:
+        result["num_layers_in_first_pipeline_stage"] = (
+            run.parallel.num_layers_in_first_pipeline_stage
+        )
+    if run.parallel.num_layers_in_last_pipeline_stage is not None:
+        result["num_layers_in_last_pipeline_stage"] = (
+            run.parallel.num_layers_in_last_pipeline_stage
+        )
+    _validate_pipeline_layer_partition(result)
     # The standardized TP4/PP2/EP4 path intentionally does not use activation
     # recomputation / gradient checkpointing.
     for key in ("recompute_granularity", "recompute_method", "recompute_num_layers"):
         result.pop(key, None)
     return result
+
+
+def _validate_pipeline_layer_partition(config: dict[str, Any]) -> None:
+    """Validate MCore's first/middle/last uneven PP layer assignment."""
+    pp_size = int(config["pipeline_model_parallel_size"])
+    first = config.get("num_layers_in_first_pipeline_stage")
+    last = config.get("num_layers_in_last_pipeline_stage")
+    if first is None and last is None:
+        return
+
+    num_layers = int(config["num_layers"])
+    specified_layers = int(first or 0) + int(last or 0)
+    specified_stages = int(first is not None) + int(last is not None)
+    remaining_layers = num_layers - specified_layers
+    remaining_stages = pp_size - specified_stages
+    if remaining_layers < 0 or remaining_stages < 0:
+        raise ValueError("uneven pipeline assignment exceeds model layers or PP stages")
+    if remaining_stages == 0:
+        if remaining_layers:
+            raise ValueError("uneven pipeline assignment does not cover every model layer")
+        return
+    if remaining_layers <= 0 or remaining_layers % remaining_stages:
+        raise ValueError(
+            "remaining model layers must divide evenly across middle pipeline stages"
+        )
 
 
 def summarize_mcore_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -64,6 +98,8 @@ def summarize_mcore_config(config: dict[str, Any]) -> dict[str, Any]:
         "padded_vocab_size",
         "tensor_model_parallel_size",
         "pipeline_model_parallel_size",
+        "num_layers_in_first_pipeline_stage",
+        "num_layers_in_last_pipeline_stage",
         "context_parallel_size",
         "expert_model_parallel_size",
         "expert_tensor_parallel_size",
