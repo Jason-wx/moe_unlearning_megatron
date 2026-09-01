@@ -1,134 +1,216 @@
-# Megatron 完整训练流程
+# OpenUnlearning Runbook
 
-本文只说明 Intern-S2 在 Megatron 后端上的正式流程：准备 token cache、训练、保存两个
-checkpoint，并运行 WMDP/MMLU 评测。所有命令均从仓库根目录执行。
+本文说明如何在共享集群上准备数据、修改配置、启动训练和运行评测。所有命令均从仓库
+根目录执行。
 
-## 1. 准备数据缓存
+## 1. 环境与入口
 
-训练默认使用以下两份缓存：
+项目使用下面的 Conda 环境：
 
-```text
-data_cache/interns2_wmdp_bio_max1024_stride1024/forget
-data_cache/interns2_fineweb_edu_5b_max1024_stride1024
-```
+~~~bash
+cd /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning
+conda activate /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/envs/open-unlearning
+~~~
 
-第一份是 WMDP-Bio forget 数据；第二份是需要 retain loss 的算法使用的 FineWeb
-retain 数据。每个 cache 目录都必须包含：
+常用入口：
 
-```text
-meta.json
-summary.json
-chunks.jsonl
-token_ids.uint32.bin
-```
+| 任务 | 脚本 |
+| --- | --- |
+| 检查配置 | scripts/inspect.sh |
+| 构建 document-chunk cache | scripts/build_cache.sh |
+| 构建 XTuner soft-pack cache | scripts/build_xtuner_pack_cache.sh |
+| Megatron 训练 | scripts/train_megatron.sh |
+| DeepSpeed 训练 | scripts/train_deepspeed.sh |
+| checkpoint 评测 | scripts/lm_eval_accelerate.sh |
+| 顺序训练并评测多个配置 | scripts/run_megatron_train_eval_group.sh |
+| 提交 RJob | scripts/submit_rjob_example.sh |
 
-确认现有缓存：
+## 2. 数据准备
 
-```bash
-for CACHE_DIR in \
-  data_cache/interns2_wmdp_bio_max1024_stride1024/forget \
-  data_cache/interns2_fineweb_edu_5b_max1024_stride1024
-do
-  test -f "${CACHE_DIR}/meta.json"
-  test -f "${CACHE_DIR}/chunks.jsonl"
-  test -f "${CACHE_DIR}/token_ids.uint32.bin"
-  echo "cache ready: ${CACHE_DIR}"
-done
-```
+项目支持两套数据 cache。两者最终都由训练配置中的 data.forget_cache 和
+data.retain_cache 引用。
 
-如果缓存缺失，使用 Intern-S2 tokenizer 重新构建。不要对已有正式 cache 添加
-`--overwrite`。
+已有数据缓存位于共享服务器：
 
-```bash
-MODEL_PATH=/mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/Intern-S2-base05
+~~~text
+/mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/data_cache
+~~~
 
+Git 仓库不包含、也不会 pull 这些数据。开始训练前请先登录服务器查看该目录；
+已有缓存可直接在训练配置中引用，缺少时再按下面的方法构建。
+
+### 2.1 Document chunk
+
+每篇文档单独 tokenize，再在文档内部按 max length 和 stride 切 chunk，不跨文档拼接。
+
+~~~bash
 scripts/build_cache.sh \
-  --model-path "${MODEL_PATH}" \
-  --data-files '/mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/data/wmdp/bio-forget-corpus/*.parquet' \
-  --output-dir data_cache/interns2_wmdp_bio_max1024_stride1024/forget \
-  --max-length 1024 --stride 1024 --workers 16
+  --model-path /path/to/tokenizer-or-model \
+  --data-files '/path/to/corpus/*.parquet' \
+  --dataset-path parquet \
+  --text-key text \
+  --output-dir /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/data_cache/my_document_chunk_cache \
+  --max-length 1024 \
+  --stride 1024 \
+  --workers 8 \
+  --tokenize-batch-size 1024
+~~~
 
-scripts/build_cache.sh \
-  --model-path "${MODEL_PATH}" \
-  --data-files '/mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/data/fineweb-edu-5b-shuffle/*.parquet' \
-  --output-dir data_cache/interns2_fineweb_edu_5b_max1024_stride1024 \
-  --max-length 1024 --stride 1024 --workers 16 --tokenize-batch-size 512
-```
+JSONL 输入把 dataset-path 改为 json。
 
-## 2. 训练一个算法并评测
+### 2.2 XTuner soft-pack
 
-推荐直接提交 train→eval 流水线。下面以 Pure NPO 为例：
+该方案固定数据顺序，并把短文档组合成定长 pack。正式 Intern-S2 Megatron 配置使用
+4096-token XTuner soft-pack cache。
 
-```bash
-SWEEP_NAME=interns2-pure-npo-v1 \
+构建配置位于：
+
+~~~text
+configs/data_processing/
+├── xtuner_softpack_template.yaml
+├── interns2_wmdp_bio_forget_xtuner_softpack.yaml
+├── interns2_wmdp_bio_retain_xtuner_softpack.yaml
+└── interns2_fineweb_edu_5b_xtuner_softpack.yaml
+~~~
+
+复制模板并修改 tokenizer、数据文件和输出目录，然后执行：
+
+~~~bash
+cp configs/data_processing/xtuner_softpack_template.yaml \
+  configs/data_processing/my_xtuner_softpack.yaml
+
+scripts/build_xtuner_pack_cache.sh \
+  --config configs/data_processing/my_xtuner_softpack.yaml
+~~~
+
+更详细的数据格式说明见 docs/data-processing.md。
+
+## 3. 配置与启动
+
+训练配置位于：
+
+~~~text
+configs/training/deepspeed/interns2/   DeepSpeed 配置
+configs/training/megatron/interns2/    Intern-S2 Megatron 配置
+configs/training/megatron/qwen35/      Qwen3.5 Megatron 配置
+configs/training/megatron/gemma4/      Gemma 4 Megatron 配置
+~~~
+
+选择或复制一份配置进行修改：
+
+~~~bash
+cp configs/training/megatron/interns2/pure_npo.yaml \
+  configs/training/megatron/interns2/my_experiment.yaml
+~~~
+
+启动前检查配置：
+
+~~~bash
+scripts/inspect.sh \
+  --config configs/training/megatron/interns2/my_experiment.yaml
+
+scripts/inspect.sh \
+  --config configs/training/megatron/interns2/my_experiment.yaml \
+  --backend megatron \
+  --check-paths
+~~~
+
+只查看最终启动参数：
+
+~~~bash
+scripts/train_megatron.sh \
+  configs/training/megatron/interns2/my_experiment.yaml --dry-run
+
+scripts/train_deepspeed.sh \
+  configs/training/deepspeed/interns2/pure_npo.yaml --dry-run
+~~~
+
+正式启动：
+
+~~~bash
+# Megatron
+scripts/train_megatron.sh \
+  configs/training/megatron/interns2/my_experiment.yaml
+
+# DeepSpeed
+scripts/train_deepspeed.sh \
+  configs/training/deepspeed/interns2/pure_npo.yaml
+~~~
+
+在当前分配的节点上顺序训练多个 Megatron 配置，并在每个配置训练完成后评测：
+
+~~~bash
+SWEEP_NAME=interns2-my-sweep \
+EVAL_TASKS=wmdp,mmlu \
+scripts/run_megatron_train_eval_group.sh \
+  configs/training/megatron/interns2/pure_npo.yaml \
+  configs/training/megatron/interns2/grad_diff.yaml \
+  configs/training/megatron/interns2/wga.yaml
+~~~
+
+## 4. RJob
+
+RJob 单独使用 scripts/submit_rjob_example.sh。单个 Megatron 训练：
+
+~~~bash
+BACKEND=megatron \
+WORKFLOW=single \
+CONFIG=configs/training/megatron/interns2/pure_npo.yaml \
+JOB_NAME=ou-interns2-pure-npo \
+GPUS=8 \
+scripts/submit_rjob_example.sh
+~~~
+
+单个 DeepSpeed 训练：
+
+~~~bash
+BACKEND=deepspeed \
+WORKFLOW=single \
+CONFIG=configs/training/deepspeed/interns2/pure_npo.yaml \
+JOB_NAME=ou-interns2-pure-npo-ds \
+GPUS=8 \
+scripts/submit_rjob_example.sh
+~~~
+
+在一个 RJob 中顺序训练并评测多个 Megatron 配置：
+
+~~~bash
+SWEEP_NAME=interns2-all-algorithms-v1 \
 WORKFLOW=train-eval-group \
 BACKEND=megatron \
-JOB_NAME=ou-interns2-pure-npo \
-CONFIG=configs/experiments/interns2_pure_npo.yaml \
-scripts/submit_rjob_example.sh pure_npo
-```
+JOB_NAME=ou-interns2-group1 \
+GPUS=8 \
+EVAL_TASKS=wmdp,mmlu \
+scripts/submit_rjob_example.sh \
+  configs/training/megatron/interns2/pure_npo.yaml \
+  configs/training/megatron/interns2/grad_diff.yaml \
+  configs/training/megatron/interns2/wga.yaml
+~~~
 
-该 RJob 使用 8 张 GPU、global batch size 128，执行：
+查看任务：
 
-```text
-训练完整 1 epoch
-→ 保存 checkpoint-step-300
-→ 保存 checkpoint-epoch-1
-→ 评测 step-300 的 wmdp,mmlu
-→ 评测 epoch-1 的 wmdp,mmlu
-```
-
-可用算法参数为：
-
-```text
-grad_ascent  grad_diff  pure_npo  token_npo  token_simnpo  wga
-satimp       ceu        pdu       undial    rmu
-```
-
-## 3. 用三个 RJob 训练全部算法
-
-三个 RJob 使用相同的 `SWEEP_NAME`。三个作业并行运行，每个作业内按参数顺序串行执行
-“训练一个算法 → 评测两个 checkpoint → 下一个算法”。
-
-```bash
-SWEEP_NAME=interns2-all-algorithms-v1 WORKFLOW=train-eval-group \
-BACKEND=megatron JOB_NAME=ou-interns2-group1 \
-scripts/submit_rjob_example.sh pure_npo grad_diff wga ceu
-
-SWEEP_NAME=interns2-all-algorithms-v1 WORKFLOW=train-eval-group \
-BACKEND=megatron JOB_NAME=ou-interns2-group2 \
-scripts/submit_rjob_example.sh token_npo token_simnpo satimp pdu
-
-SWEEP_NAME=interns2-all-algorithms-v1 WORKFLOW=train-eval-group \
-BACKEND=megatron JOB_NAME=ou-interns2-group3 \
-scripts/submit_rjob_example.sh rmu undial grad_ascent
-```
-
-## 4. 查看输出
-
-Megatron 权重默认写入：
-
-```text
-/mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/
-└── <SWEEP_NAME>-<algorithm>/
-    ├── checkpoint-step-300/
-    └── checkpoint-epoch-1/
-```
-
-评测结果写入：
-
-```text
-evaluations/unlearning/interns2/<SWEEP_NAME>/
-├── lm_eval_results_<algorithm>_step300_wmdp_mmlu/result.json
-└── lm_eval_results_<algorithm>_epoch1_wmdp_mmlu/result.json
-```
-
-查看作业状态和日志：
-
-```bash
+~~~bash
 rjob get <RJOB_NAME>
 rjob logs job <RJOB_NAME> --tail-lines 200
-```
+~~~
 
-单个算法训练失败时，流水线会继续下一个算法；单个 checkpoint 评测失败时，也会继续
-后续任务。只要发生过失败，该 RJob 最终会返回非零状态并在末尾输出失败数量。
+## 5. 评测与输出
+
+单独评测一个 checkpoint：
+
+~~~bash
+scripts/lm_eval_accelerate.sh \
+  /path/to/checkpoint-epoch-1 \
+  wmdp,mmlu \
+  /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/evaluations/unlearning/my_run/lm_eval_results_pure_npo_epoch1_wmdp_mmlu
+~~~
+
+主要输出位置：
+
+| 内容 | 位置 |
+| --- | --- |
+| Megatron checkpoint | backends.megatron.output_root/training.output_name |
+| DeepSpeed checkpoint | training.output_dir/deepspeed |
+| 评测结果 | evaluations/unlearning/ |
+| RJob 日志 | outputs/rjob_logs/ |
+| W&B 离线记录 | wandb_offline/ |

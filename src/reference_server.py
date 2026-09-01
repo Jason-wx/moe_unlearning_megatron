@@ -1,8 +1,8 @@
-#!/usr/bin/env python
 """Host exactly one frozen reference model on a dedicated GPU.
 
-The server deliberately returns CPU tensors. NPO/DPO request only per-sequence
-NLLs; exact KL and UNDIAL request logits and are consequently bandwidth-heavy.
+The server deliberately returns CPU tensors. Sequence NPO/DPO request
+per-sequence NLLs, TokenNPO requests per-token NLLs, and exact KL/UNDIAL request
+logits and are consequently bandwidth-heavy.
 """
 
 import argparse
@@ -48,6 +48,17 @@ def sequence_nll(logits, labels):
     ).sum(dim=-1)
 
 
+def token_nll(logits, labels):
+    shifted_logits = logits[..., :-1, :].contiguous()
+    shifted_labels = labels[..., 1:].contiguous()
+    return F.cross_entropy(
+        shifted_logits.float().transpose(-1, -2),
+        shifted_labels,
+        ignore_index=-100,
+        reduction="none",
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", required=True)
@@ -80,13 +91,17 @@ def main():
                 outputs = model(**inputs)
                 if request["operation"] == "sequence_nll":
                     value = sequence_nll(outputs.logits, inputs["labels"])
+                elif request["operation"] == "token_nll":
+                    value = token_nll(outputs.logits, inputs["labels"])
                 elif request["operation"] == "logits":
                     value = outputs.logits
                 else:
                     raise ValueError(f"Unknown operation: {request['operation']}")
                 value = value.detach().to("cpu")
             connection.send({"ok": True, "value": value})
-        except Exception as exc:
+        # This is an RPC boundary: serialize any model/runtime failure back to
+        # the caller instead of terminating the long-lived reference server.
+        except Exception as exc:  # noqa: BLE001
             connection.send({"ok": False, "error": repr(exc)})
         finally:
             connection.close()

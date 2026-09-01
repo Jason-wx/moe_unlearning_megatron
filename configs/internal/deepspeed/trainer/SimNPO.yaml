@@ -1,0 +1,5 @@
+defaults:
+  - finetune
+
+handler: SimNPO
+method_args: {}

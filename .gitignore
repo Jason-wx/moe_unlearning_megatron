@@ -8,6 +8,9 @@
 /runtime/
 /scripts/**/logs/
 /scripts/**/rjob_logs/
+/tests/*
+!tests/test_xtuner_packed_cache.py
+!tests/test_trainable_parameters.py
 
 # Legacy project rules
 submit.py

@@ -3,7 +3,7 @@ from trainer.utils import compute_wga_loss
 
 
 class WGA(GradDiff):
-    def __init__(self, beta=1.0, gamma=1.0, alpha=1.0, *args, **kwargs):
+    def __init__(self, beta=0.5, gamma=1.0, alpha=0.0, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.gamma = gamma
         self.alpha = alpha
@@ -22,6 +22,13 @@ class WGA(GradDiff):
             model=model, inputs=forget_inputs, beta=self.beta
         )
 
+        # Paper-aligned WGA is a forget-only objective. When alpha is zero,
+        # return before touching retain inputs so the data pipeline can omit
+        # retain examples and avoid an otherwise useless second forward pass.
+        if self.alpha == 0.0:
+            loss = self.gamma * forget_loss
+            return (loss, forget_outputs) if return_outputs else loss
+
         retain_inputs = inputs["retain"]
         retain_inputs = {
             "input_ids": retain_inputs["input_ids"],
@@ -30,7 +37,5 @@ class WGA(GradDiff):
         }
         retain_loss = self.compute_retain_loss(model=model, retain_inputs=retain_inputs)
 
-        loss = (
-            self.gamma * forget_loss + self.alpha * retain_loss
-        )  # default gamma=1.0 alpha=1.0
+        loss = self.gamma * forget_loss + self.alpha * retain_loss
         return (loss, forget_outputs) if return_outputs else loss

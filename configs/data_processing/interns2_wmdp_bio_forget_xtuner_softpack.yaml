@@ -1,0 +1,34 @@
+# XTuner-compatible pure-text cache for the WMDP-Bio forget corpus.
+tokenizer:
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/Intern-S2-base05
+  trust_remote_code: true
+
+dataset:
+  files: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/data/wmdp/bio-forget-corpus/*.parquet
+  format: parquet
+  text_key: text
+  sample_ratio: 1.0
+  filter_empty: true
+  max_documents: null
+
+packing:
+  # The collaborator's harmful loader uses the global seed plus one.
+  seed: 43
+  pack_level: soft
+  pack_max_length: 4096
+  pack_to_max_length: true
+  pack_chunk_size: 10000
+  pack_workers: 4
+  pack_extra_buffer_size: 100
+  global_pack: false
+  add_eos_token: true
+  add_bos_token: false
+
+build:
+  tokenize_workers: 7
+  tokenize_batch_size: 1024
+  show_progress: true
+
+output:
+  directory: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/data_cache/Xtuner/interns2_wmdp_bio_softpack4096/forget
+  overwrite: false

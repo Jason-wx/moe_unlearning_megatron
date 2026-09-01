@@ -1,0 +1,17 @@
+defaults:
+  # Minimal Hydra bridge used internally by the unified DeepSpeed adapter.
+  - model: default
+  - trainer: GradAscent
+  - data: unlearn
+  - collator: DataCollatorForSupervisedDataset
+  - eval: null
+  - hydra: default
+  - paths: default
+  - _self_
+
+trainer:
+  args: 
+    remove_unused_columns: False
+
+mode: unlearn
+task_name: ???

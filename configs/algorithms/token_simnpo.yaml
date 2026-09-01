@@ -1,8 +1,0 @@
-algorithm:
-  name: token_simnpo
-  deepspeed_trainer: SimNPO
-  beta: 0.1
-  delta: 0.0
-  gamma: 1.0
-  alpha: 0.1
-  retain_loss_type: NLL

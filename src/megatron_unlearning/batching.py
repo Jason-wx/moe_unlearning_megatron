@@ -37,7 +37,14 @@ def collate_role_batch(
 
     input_ids = _pad([item["input_ids"] for item in examples], pad_token_id, sequence_length)
     source_labels = _pad([item["labels"] for item in examples], IGNORE_INDEX, sequence_length)
-    padding_mask = input_ids.ne(pad_token_id)
+    if all("attention_mask" in item for item in examples):
+        padding_mask = _pad(
+            [item["attention_mask"] for item in examples],
+            0,
+            sequence_length,
+        ).bool()
+    else:
+        padding_mask = input_ids.ne(pad_token_id)
     # Transformers causal-LM heads shift labels internally. MCore consumes an
     # already aligned target for every input position, so label[t] must be the
     # source label at t + 1. Preserve any source-side -100 mask while shifting.

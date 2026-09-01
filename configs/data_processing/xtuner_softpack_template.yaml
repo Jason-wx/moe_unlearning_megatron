@@ -1,0 +1,38 @@
+# Copy this file and fill in one pure-text CPT dataset per cache build.
+tokenizer:
+  path: /path/to/tokenizer-or-model
+  trust_remote_code: true
+
+dataset:
+  # A file, directory, glob, or list of those values.
+  files: /path/to/cpt-data/*.jsonl
+  # Supported by the first implementation: json (JSONL) and parquet.
+  format: json
+  # Set to null for XTuner records using `content` or pretrain `messages`.
+  text_key: content
+  sample_ratio: 1.0
+  filter_empty: true
+  # null processes the full dataset. Useful for a minimal validation build.
+  max_documents: null
+
+packing:
+  # This seed fixes XTuner's torch.randperm document order and final pack order.
+  seed: 42
+  pack_level: soft
+  pack_max_length: 4096
+  pack_to_max_length: true
+  pack_chunk_size: 10000
+  pack_workers: 4
+  pack_extra_buffer_size: 100
+  global_pack: false
+  add_eos_token: true
+  add_bos_token: false
+
+build:
+  tokenize_workers: 8
+  tokenize_batch_size: 1024
+  show_progress: true
+
+output:
+  directory: ${OU_CACHE_ROOT}/replace-with-cache-name
+  overwrite: false

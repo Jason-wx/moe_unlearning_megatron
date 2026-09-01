@@ -1,0 +1,90 @@
+# Self-contained deepspeed training configuration. No public config inheritance.
+name: interns2-undial-mbs8-window1-wmdp-bio
+model:
+  name: interns2
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/Intern-S2-base05
+  handler: AutoModelForMultimodalLM
+  num_experts: 256
+  trust_remote_code: true
+  tokenizer_path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/Intern-S2-base05
+data:
+  name: wmdp_bio
+  forget_cache: ${OU_CACHE_ROOT}/interns2/interns2_wmdp_bio_max1024_stride1024/forget
+  retain_cache: ${OU_CACHE_ROOT}/interns2/interns2_fineweb_edu_5b_max1024_stride1024
+  sequence_length: 1024
+  handler: CachedDocumentChunkDataset
+  pad_token_id: null
+  shuffle: true
+algorithm:
+  name: undial
+  deepspeed_trainer: UNDIAL
+  beta: 3.0
+  gamma: 1.0
+  alpha: 0.0
+training:
+  global_batch_size: 128
+  train_steps: 1344
+  num_train_epochs: 1
+  learning_rate: 1.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 0.0
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: expert
+  save_every_epoch: true
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_dir: ${OU_CHECKPOINT_ROOT}/interns2-undial-mbs8-window1-wmdp-bio
+  save_steps: []
+  save_final_checkpoint: false
+  wandb_mode: offline
+backends:
+  deepspeed:
+    enabled: true
+    world_size: 8
+    micro_batch_size: 4
+    optimizer: adamw_torch
+    gradient_checkpointing: true
+    do_train: true
+    do_eval: false
+    remove_unused_columns: false
+    save_only_model: true
+    report_to: wandb
+    ddp_find_unused_parameters: true
+    dataloader_drop_last: true
+    per_device_eval_batch_size: 1
+    warmup_steps: 0
+    lr_scheduler_type: constant
+    logging_steps: 1
+    launcher:
+      mixed_precision: bf16
+      num_machines: 1
+      zero3_init_flag: true
+    deepspeed_config:
+      zero_optimization:
+        stage: 3
+        offload_optimizer:
+          device: none
+          pin_memory: true
+        offload_param:
+          device: none
+          pin_memory: true
+        overlap_comm: true
+        contiguous_gradients: true
+        reduce_bucket_size: auto
+        stage3_prefetch_bucket_size: auto
+        stage3_param_persistence_threshold: auto
+        sub_group_size: 1000000000.0
+        stage3_max_live_parameters: 1000000000.0
+        stage3_max_reuse_distance: 1000000000.0
+        stage3_gather_16bit_weights_on_model_save: true
+      train_batch_size: auto
+      train_micro_batch_size_per_gpu: auto
+      gradient_accumulation_steps: auto
+      gradient_clipping: 1.0
+      bf16:
+        enabled: true

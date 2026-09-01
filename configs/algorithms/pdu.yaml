@@ -1,8 +1,0 @@
-algorithm:
-  name: pdu
-  deepspeed_trainer: PDU
-  gamma: 1.0
-  alpha: 100.0
-  retain_loss_eps: 0.3
-  primal_dual: true
-  dual_step_size: 5.0

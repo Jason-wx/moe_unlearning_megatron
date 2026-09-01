@@ -2,16 +2,21 @@ import os
 
 import hydra
 from omegaconf import DictConfig
-from data import get_data, get_collators
+
+from data import get_collators, get_data
+from evals import get_evaluators
 from model import get_model
 from trainer import load_trainer
-from evals import get_evaluators
 from trainer.utils import seed_everything
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="train.yaml")
+@hydra.main(
+    version_base=None,
+    config_path="../configs/internal/deepspeed",
+    config_name="unlearn.yaml",
+)
 def main(cfg: DictConfig):
-    """Entry point of the code to train models
+    """Internal Hydra bridge used by the unified DeepSpeed adapter.
     Args:
         cfg (DictConfig): Config to train
     """

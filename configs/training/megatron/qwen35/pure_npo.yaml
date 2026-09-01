@@ -1,0 +1,61 @@
+# Self-contained megatron training configuration. No public config inheritance.
+name: qwen35-pure-npo-wmdp-bio
+model:
+  name: qwen35
+  path: /mnt/shared-storage-gpfs2/gpfs2-shared-public/huggingface/zskj-hub/models-Qwen-Qwen3.5-35B-A3B-Base
+  num_experts: 256
+  trust_remote_code: true
+data:
+  name: wmdp_bio
+  forget_cache: ${OU_CACHE_ROOT}/qwen35_wmdp_bio_max1024_stride1024/forget
+  retain_cache: ${OU_CACHE_ROOT}/qwen35_fineweb_edu_5b_max1024_stride1024
+  sequence_length: 1024
+  pad_token_id: null
+  shuffle: true
+algorithm:
+  name: pure_npo
+  beta: 0.1
+  gamma: 1.0
+training:
+  global_batch_size: 128
+  train_steps: -1
+  num_train_epochs: 1
+  learning_rate: 1.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 0.0
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.03
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: expert
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: qwen35-pure-npo-wmdp-bio
+  save_steps: []
+  save_final_checkpoint: false
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/v3
+    micro_batch_size: 16
+    parallel:
+      world_size: 8
+      tensor_parallel: 4
+      pipeline_parallel: 2
+      context_parallel: 1
+      expert_parallel: 4
+      expert_tensor_parallel: 1
+      sequence_parallel: true
+      use_distributed_optimizer: true
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2

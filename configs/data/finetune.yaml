@@ -1,3 +1,0 @@
-defaults:
-  - datasets@train: TOFU_QA_full
-  - datasets@eval: null

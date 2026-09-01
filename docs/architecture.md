@@ -2,40 +2,39 @@
 
 ## 设计原则
 
-项目只维护一套实验语义、两个后端适配器。模型、数据、算法、训练 profile 在共享
-配置中定义；DeepSpeed 和 Megatron 配置只表达各自的并行与运行时差异。训练产物
-强制写入不同后端子目录，避免同名实验互相覆盖。
+项目只维护一套实验语义、两个后端适配器。每个训练 YAML 自包含模型、数据、算法、
+优化器、输出以及当前后端的并行参数，不再拼装公开组件。
 
 ```text
-configs/experiments/*.yaml
+configs/training/
         |
-        +-- models + datasets + algorithms + profiles
+        +-- deepspeed/interns2/*.yaml -> Accelerate -> src/train.py
         |
-        +-- configs/backends/deepspeed  -> Accelerate -> src/train.py
-        |
-        `-- configs/backends/megatron   -> src/megatron_unlearning
+        `-- megatron/<model>/*.yaml   -> src/megatron_unlearning
 ```
 
 ## 稳定入口
 
-- `ou inspect --config ...`：合并环境变量和组件配置并校验。
+- `ou inspect --config ...`：展开环境变量并校验完整配置。
 - `ou train --backend deepspeed --config ...`：生成或执行 Accelerate/ZeRO-3 命令。
 - `ou train --backend megatron --config ...`：生成映射或进入 MCore runtime。
 - `scripts/train_deepspeed.sh` 与 `scripts/train_megatron.sh`：RJob 友好的薄包装。
 - `scripts/submit_rjob_example.sh`：唯一保留的提交模板。
 
-旧的 Hydra、trainer、eval 模块仍是 DeepSpeed 后端实现，不重复复制。旧的具体算法
-启动脚本不再作为公开接口；它们的参数来源已归档到共享配置和结果文档中。
+`configs/internal/deepspeed` 只保留 Hydra trainer 的机械适配，不承载实验参数。
 
 ## 算法能力边界
 
 DeepSpeed 的底层仍保留上游全部 trainer；统一 CLI 当前覆盖标准 WMDP cache 算法，
-模型专用 RMU 与偏好数据 DPO/AltPO 在完成 loader 合并前继续走兼容入口。Megatron 当前
-支持 WMDP 文本缓存上的 GradAscent、GradDiff、NPO、TokenNPO、SimNPO、WGA、
-SatImp、CEU、PDU、UNDIAL 和 RMU。后端适配器会在启动前拒绝不支持的组合。
+模型专用 RMU 与偏好数据 DPO/AltPO 不在统一 DeepSpeed 入口中。Megatron 当前
+支持 13 个规范算法名：GradAscent、GradDiff、NPO、PureNPO、TokenNPO、SimNPO、
+TokenSimNPO、WGA、SatImp、CEU、PDU、UNDIAL 和 RMU。除 RMU 目前仅支持 Megatron
+外，其余 12 个均支持 DeepSpeed 与 Megatron；后端适配器会在启动前拒绝不支持的组合。
 
-`pure_npo` 是配置层的显式名称，运行时规范化为 `npo`，并且不会装载 retain 数据。
-这样可以避免过去 NPO 与 NPO+retain 语义混用。
+三个 NPO 名称不再互为 alias：`npo` 使用 sequence NLL 求和，`pure_npo` 先按有效
+token 数归一化，`token_npo` 在逐 token 的 student/reference NLL 差上分别应用 sigmoid。
+两个 SimNPO 名称也独立：`simnpo` 先得到 sequence mean NLL，`token_simnpo` 逐 token
+应用 sigmoid。NPO 三种版本均为 forget-only；SimNPO 两种版本保留 retain NLL 项。
 
 ## 代码边界
 

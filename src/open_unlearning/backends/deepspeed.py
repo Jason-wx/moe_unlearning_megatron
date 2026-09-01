@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -13,6 +14,10 @@ from open_unlearning.runtime_paths import RuntimePaths
 
 def _bool(value: object) -> str:
     return "true" if bool(value) else "false"
+
+
+def _deepspeed_config_path(config: ExperimentConfig, paths: RuntimePaths) -> Path:
+    return paths.runs / config.name / "deepspeed_config.json"
 
 
 def build_command(config: ExperimentConfig) -> list[str]:
@@ -34,10 +39,6 @@ def build_command(config: ExperimentConfig) -> list[str]:
         accelerate = str(
             candidate if candidate.exists() else shutil.which("accelerate") or candidate
         )
-    config_file = Path(str(backend["accelerate_config"]))
-    if not config_file.is_absolute():
-        config_file = paths.repo / config_file
-
     world_size = int(backend["world_size"])
     micro_batch = int(backend["micro_batch_size"])
     global_batch = int(training["global_batch_size"])
@@ -47,7 +48,10 @@ def build_command(config: ExperimentConfig) -> list[str]:
         "grad_ascent": "GradAscent",
         "grad_diff": "GradDiff",
         "npo": "NPO",
+        "pure_npo": "PureNPO",
+        "token_npo": "TokenNPO",
         "simnpo": "SimNPO",
+        "token_simnpo": "TokenSimNPO",
         "undial": "UNDIAL",
         "ceu": "CEU",
         "pdu": "PDU",
@@ -60,46 +64,49 @@ def build_command(config: ExperimentConfig) -> list[str]:
     trainer_name = trainer_names.get(requested_trainer.lower(), requested_trainer)
 
     overrides = [
-        "experiment=unlearn/wmdp/default.yaml",
-        f"model={model['hydra_name']}",
+        "model=default",
+        f"model.model_handler={model['handler']}",
         f"model.model_args.pretrained_model_name_or_path={model['path']}",
-        f"model.tokenizer_args.pretrained_model_name_or_path={model['path']}",
+        f"model.model_args.trust_remote_code={_bool(model['trust_remote_code'])}",
+        f"model.tokenizer_args.pretrained_model_name_or_path={model['tokenizer_path']}",
+        f"model.tokenizer_args.trust_remote_code={_bool(model['trust_remote_code'])}",
         f"trainer={trainer_name}",
         "~trainer.method_args",
-        f"+trainer.method_args.trainable_param_mode={training.get('trainable_param_mode', 'moe_experts')}",
+        f"+trainer.method_args.trainable_param_mode={training.get('trainable_param_mode', 'expert')}",
+        f"+trainer.method_args.shuffle_train={_bool(data.get('shuffle', True))}",
         f"task_name={config.name}",
-        "data_split=bio",
-        "data.forget.WMDP_forget.handler=CachedDocumentChunkDataset",
+        f"data.forget.WMDP_forget.handler={data['handler']}",
         f"+data.forget.WMDP_forget.args.cache_dir={data['forget_cache']}",
         "data.anchor=forget",
         f"trainer.args.output_dir={training['output_dir']}/deepspeed",
-        "trainer.args.do_train=true",
-        "trainer.args.do_eval=false",
-        "trainer.args.remove_unused_columns=false",
+        f"trainer.args.do_train={_bool(backend['do_train'])}",
+        f"trainer.args.do_eval={_bool(backend['do_eval'])}",
+        f"trainer.args.remove_unused_columns={_bool(backend['remove_unused_columns'])}",
         f"trainer.args.per_device_train_batch_size={micro_batch}",
-        "trainer.args.per_device_eval_batch_size=1",
+        f"trainer.args.per_device_eval_batch_size={backend['per_device_eval_batch_size']}",
         f"trainer.args.gradient_accumulation_steps={grad_accum}",
         f"trainer.args.learning_rate={training['learning_rate']}",
         f"trainer.args.weight_decay={training.get('weight_decay', 0.0)}",
-        f"trainer.args.optim={backend.get('optimizer', 'adamw_torch')}",
+        f"trainer.args.optim={backend['optimizer']}",
         f"+trainer.args.adam_beta1={training.get('adam_beta1', 0.9)}",
         f"+trainer.args.adam_beta2={training.get('adam_beta2', 0.999)}",
         f"+trainer.args.adam_epsilon={training.get('adam_eps', 1e-8)}",
-        f"trainer.args.max_grad_norm={training.get('gradient_clip', 1.0)}",
-        f"trainer.args.max_steps={training.get('train_steps', -1)}",
+        f"++trainer.args.max_grad_norm={training.get('gradient_clip', 1.0)}",
+        f"++trainer.args.max_steps={training.get('train_steps', -1)}",
         f"trainer.args.num_train_epochs={training.get('num_train_epochs', 1)}",
-        "+trainer.args.warmup_steps=0",
-        "trainer.args.lr_scheduler_type=constant",
-        "trainer.args.logging_steps=1",
+        f"+trainer.args.warmup_steps={backend['warmup_steps']}",
+        f"++trainer.args.lr_scheduler_type={backend['lr_scheduler_type']}",
+        f"trainer.args.logging_steps={backend['logging_steps']}",
         f"trainer.args.save_strategy={'epoch' if training.get('save_every_epoch') else 'no'}",
+        f"trainer.args.save_only_model={_bool(backend['save_only_model'])}",
         f"trainer.args.bf16={_bool(training.get('bf16', True))}",
-        f"trainer.args.gradient_checkpointing={_bool(backend.get('gradient_checkpointing', True))}",
-        "trainer.args.ddp_find_unused_parameters=true",
-        "trainer.args.report_to=wandb",
+        f"trainer.args.gradient_checkpointing={_bool(backend['gradient_checkpointing'])}",
+        f"trainer.args.ddp_find_unused_parameters={_bool(backend['ddp_find_unused_parameters'])}",
+        f"trainer.args.report_to={backend['report_to']}",
         f"+trainer.args.run_name={config.name}-deepspeed",
         f"trainer.args.seed={training.get('seed', 42)}",
         f"+trainer.args.data_seed={training.get('seed', 42)}",
-        "+trainer.args.dataloader_drop_last=true",
+        f"+trainer.args.dataloader_drop_last={_bool(backend['dataloader_drop_last'])}",
     ]
     if config.uses_retain and data.get("retain_cache"):
         overrides.extend(
@@ -123,11 +130,21 @@ def build_command(config: ExperimentConfig) -> list[str]:
         method_key = deepspeed_method_keys.get(key, key)
         overrides.append(f"+trainer.method_args.{method_key}={value}")
 
+    launcher = backend["launcher"]
     return [
         accelerate,
         "launch",
-        "--config_file",
-        str(config_file),
+        "--use_deepspeed",
+        "--mixed_precision",
+        str(launcher["mixed_precision"]),
+        "--num_processes",
+        str(world_size),
+        "--num_machines",
+        str(launcher["num_machines"]),
+        "--deepspeed_config_file",
+        str(_deepspeed_config_path(config, paths)),
+        "--zero3_init_flag",
+        _bool(launcher["zero3_init_flag"]),
         str(paths.repo / "src" / "train.py"),
         "--config-name=unlearn.yaml",
         *overrides,
@@ -142,7 +159,14 @@ def launch(config: ExperimentConfig, *, dry_run: bool = False) -> int:
 
         print(shlex.join(command))
         return 0
+    paths = RuntimePaths.from_environment()
+    deepspeed_config_path = _deepspeed_config_path(config, paths)
+    deepspeed_config_path.parent.mkdir(parents=True, exist_ok=True)
+    deepspeed_config_path.write_text(
+        json.dumps(config.backend("deepspeed")["deepspeed_config"], indent=2) + "\n",
+        encoding="utf-8",
+    )
     environment = dict(os.environ)
-    environment.setdefault("WANDB_MODE", "offline")
+    environment.setdefault("WANDB_MODE", str(config.payload["training"]["wandb_mode"]))
     environment.setdefault("WANDB_DIR", str(config.payload["training"]["wandb_dir"]))
     return subprocess.run(command, env=environment, check=False).returncode

@@ -1,4 +1,0 @@
-algorithm:
-  name: ceu
-  deepspeed_trainer: CEU
-  ignore_first_n_tokens: 1

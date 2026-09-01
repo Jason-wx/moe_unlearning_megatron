@@ -1,5 +1,0 @@
-algorithm:
-  name: token_npo
-  deepspeed_trainer: NPO
-  beta: 0.1
-  gamma: 1.0

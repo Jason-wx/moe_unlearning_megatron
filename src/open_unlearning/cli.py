@@ -20,16 +20,13 @@ def _positive_int(value: str) -> int:
 
 
 def _load(args: argparse.Namespace):
-    components = {
-        kind: value
-        for kind in ("model", "dataset", "algorithm", "profile")
-        if (value := getattr(args, kind, None))
-    }
     overrides = {}
     if getattr(args, "name", None):
         overrides["name"] = args.name
     if getattr(args, "output_dir", None):
         overrides.setdefault("training", {})["output_dir"] = str(args.output_dir)
+    if getattr(args, "output_name", None):
+        overrides.setdefault("training", {})["output_name"] = str(args.output_name)
     if getattr(args, "train_steps", None) is not None:
         overrides.setdefault("training", {})["train_steps"] = args.train_steps
     if getattr(args, "train_epochs", None) is not None:
@@ -48,7 +45,6 @@ def _load(args: argparse.Namespace):
         training["save_final_checkpoint"] = True
     return load_experiment(
         args.config,
-        components=components or None,
         overrides=overrides or None,
     )
 
@@ -86,13 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
     train = subparsers.add_parser("train", help="train with DeepSpeed or Megatron")
     train.add_argument("--backend", choices=("deepspeed", "megatron"), required=True)
     train.add_argument("--config", type=Path, required=True)
-    _add_component_arguments(train)
+    _add_override_arguments(train)
     train.add_argument("--dry-run", action="store_true")
     train.set_defaults(handler=_train)
 
     inspect = subparsers.add_parser("inspect", help="resolve and validate a config")
     inspect.add_argument("--config", type=Path, required=True)
-    _add_component_arguments(inspect)
+    _add_override_arguments(inspect)
     inspect.add_argument("--backend", choices=("deepspeed", "megatron"))
     inspect.add_argument("--check-paths", action="store_true")
     inspect.add_argument("--format", choices=("yaml", "json"), default="yaml")
@@ -103,13 +99,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _add_component_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--model", help="replace the model component")
-    parser.add_argument("--dataset", help="replace the dataset component")
-    parser.add_argument("--algorithm", help="replace the algorithm component")
-    parser.add_argument("--profile", help="replace the training profile component")
-    parser.add_argument("--name", help="override the generated experiment name")
-    parser.add_argument("--output-dir", type=Path, help="override training.output_dir")
+def _add_override_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--name", help="override the experiment name")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument(
+        "--output-name",
+        help="override the Megatron subdirectory name below backends.megatron.output_root",
+    )
+    output.add_argument(
+        "--output-dir", type=Path, help="override training.output_dir for DeepSpeed"
+    )
     length = parser.add_mutually_exclusive_group()
     length.add_argument(
         "--train-steps",

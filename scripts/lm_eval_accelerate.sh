@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ "$#" -ne 3 ]]; then
-    echo "Usage: scripts/evaluate.sh MODEL_DIR TASKS OUTPUT_DIR" >&2
+    echo "Usage: scripts/lm_eval_accelerate.sh MODEL_DIR TASKS OUTPUT_DIR" >&2
     exit 1
 fi
 

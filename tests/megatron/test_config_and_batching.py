@@ -11,6 +11,7 @@ from megatron_unlearning.forward_step import (
     reduce_reference_outputs,
     reduce_role_logits,
     reduce_role_losses,
+    reference_forward_step,
 )
 from megatron_unlearning.rmu import (
     RMUHookState,
@@ -24,6 +25,7 @@ from megatron_unlearning.runtime import (
     _set_trainable_parameters,
     aggregate_step_metrics,
     copy_hf_checkpoint_metadata,
+    optimizer_schedule_steps,
     reference_window_ranges,
 )
 from open_unlearning.backends.megatron import to_megatron_mapping
@@ -117,6 +119,32 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "retain_cache"):
             from_mapping(mapping).validate(check_paths=False)
 
+    def test_wga_only_requires_retain_when_alpha_is_nonzero(self):
+        mapping = self._mapping()
+        mapping["algorithm"] = {"name": "wga", "alpha": 0.0, "beta": 0.5}
+        config = from_mapping(mapping)
+        self.assertFalse(algorithm_uses_retain(config.algorithm))
+        config.validate(check_paths=False)
+
+        mapping["algorithm"]["alpha"] = 0.1
+        config = from_mapping(mapping)
+        self.assertTrue(algorithm_uses_retain(config.algorithm))
+        with self.assertRaisesRegex(ValueError, "retain_cache"):
+            config.validate(check_paths=False)
+
+    def test_satimp_only_requires_retain_when_alpha_is_nonzero(self):
+        mapping = self._mapping()
+        mapping["algorithm"] = {"name": "satimp", "alpha": 0.0, "beta1": 2.0, "beta2": 1.0}
+        config = from_mapping(mapping)
+        self.assertFalse(algorithm_uses_retain(config.algorithm))
+        config.validate(check_paths=False)
+
+        mapping["algorithm"]["alpha"] = 0.1
+        config = from_mapping(mapping)
+        self.assertTrue(algorithm_uses_retain(config.algorithm))
+        with self.assertRaisesRegex(ValueError, "retain_cache"):
+            config.validate(check_paths=False)
+
     def test_invalid_global_batch_is_rejected(self):
         mapping = self._mapping()
         mapping["training"].update(micro_batch_size=3, global_batch_size=10)
@@ -149,23 +177,34 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "offline mode"):
             from_mapping(mapping).validate(check_paths=False)
 
+    def test_cosine_scheduler_uses_actual_training_endpoint(self):
+        config = from_mapping(self._mapping())
+        self.assertEqual(optimizer_schedule_steps(config, max_steps=100), (3, 100))
+
     def test_token_npo_train_eval_config(self):
         shared = load_experiment(
-            "configs/experiments/interns2_pure_npo.yaml",
-            components={"algorithm": "token_npo"},
+            "configs/training/megatron/interns2/token_npo.yaml"
         )
         config = from_mapping(to_megatron_mapping(shared))
         self.assertEqual(config.optimizer.learning_rate, 1.0e-6)
         self.assertEqual(config.optimizer.adam_beta1, 0.9)
         self.assertEqual(config.optimizer.adam_beta2, 0.999)
         self.assertEqual(config.optimizer.adam_eps, 1.0e-8)
-        self.assertEqual(config.optimizer.gradient_clip, 0.0)
-        self.assertEqual(config.training.micro_batch_size, 16)
-        self.assertEqual(config.training.global_batch_size, 128)
-        self.assertEqual(config.training.train_steps, 1344)
+        self.assertEqual(config.optimizer.gradient_clip, 1.0)
+        self.assertEqual(config.optimizer.lr_scheduler_type, "cosine")
+        self.assertEqual(config.optimizer.lr_warmup_ratio, 0.03)
+        self.assertEqual(config.optimizer.lr_warmup_init, 0.0)
+        self.assertEqual(config.optimizer.lr_decay_steps, "auto")
+        self.assertEqual(config.training.micro_batch_size, 4)
+        self.assertEqual(config.training.global_batch_size, 4)
+        self.assertEqual(config.training.train_steps, -1)
         self.assertEqual(config.training.num_train_epochs, 1)
         self.assertEqual(config.training.seed, 42)
         self.assertTrue(config.training.save_every_epoch)
+        self.assertEqual(config.data.sequence_length, 4096)
+        self.assertEqual(config.data.pad_token_id, 248044)
+        self.assertFalse(config.data.shuffle)
+        self.assertEqual(config.training.trainable_param_mode, "full")
 
     def test_full_logit_algorithm_accepts_standard_tp(self):
         mapping = self._mapping()
@@ -179,6 +218,21 @@ class ConfigTest(unittest.TestCase):
         config = from_mapping(mapping)
         self.assertFalse(algorithm_uses_retain(config.algorithm))
         config.validate(check_paths=False)
+
+    def test_all_five_npo_family_names_are_distinct(self):
+        for name in ("npo", "pure_npo", "token_npo"):
+            mapping = self._mapping()
+            mapping["algorithm"] = {"name": name, "beta": 0.1}
+            config = from_mapping(mapping)
+            self.assertFalse(algorithm_uses_retain(config.algorithm))
+            config.validate(check_paths=False)
+        for name in ("simnpo", "token_simnpo"):
+            mapping = self._mapping()
+            mapping["data"]["retain_cache"] = "/retain"
+            mapping["algorithm"] = {"name": name, "beta": 0.1, "alpha": 0.1}
+            config = from_mapping(mapping)
+            self.assertTrue(algorithm_uses_retain(config.algorithm))
+            config.validate(check_paths=False)
 
     def test_reference_must_follow_student_layout_and_be_frozen(self):
         mapping = self._mapping()
@@ -213,7 +267,7 @@ class ConfigTest(unittest.TestCase):
     def test_rmu_config_requires_valid_target_and_retain_cache(self):
         mapping = self._mapping()
         mapping["data"]["retain_cache"] = "/retain"
-        mapping["training"]["trainable_param_mode"] = "rmu_experts"
+        mapping["training"]["trainable_param_mode"] = "full"
         mapping["algorithm"] = {
             "name": "rmu",
             "target_layer": 9,
@@ -222,6 +276,7 @@ class ConfigTest(unittest.TestCase):
         config = from_mapping(mapping)
         layout = config.validate(check_paths=False)
         self.assertEqual(layout.pipeline_parallel, 2)
+        self.assertEqual(config.training.trainable_param_mode, "full")
 
         mapping["algorithm"]["train_layers"] = [7, 10]
         with self.assertRaisesRegex(ValueError, "after target_layer"):
@@ -280,6 +335,50 @@ class BatchingTest(unittest.TestCase):
         self.assertAlmostEqual(metrics["forget_nll"].item(), 3.0)
         self.assertAlmostEqual(metrics["retain_loss"].item(), 3.0)
 
+    def test_wga_alpha_zero_accepts_forget_only_batch(self):
+        batch = collate_role_batch(
+            [self._example([1, 2, 3])],
+            None,
+            pad_token_id=0,
+            sequence_length=4,
+        )
+        token_losses = torch.tensor([[2.0, 4.0, 0.0, 0.0]])
+        loss, metrics = reduce_role_losses(
+            token_losses,
+            batch["loss_mask"],
+            batch["roles"],
+            algorithm="wga",
+            gamma=1.0,
+            alpha=0.0,
+            beta=0.5,
+        )
+        self.assertTrue(torch.isfinite(loss))
+        self.assertNotIn("retain_loss", metrics)
+        self.assertNotIn("weighted_retain_loss", metrics)
+
+    def test_satimp_alpha_zero_accepts_forget_only_batch_and_logs_diagnostics(self):
+        batch = collate_role_batch(
+            [self._example([1, 2, 3])],
+            None,
+            pad_token_id=0,
+            sequence_length=4,
+        )
+        token_losses = torch.tensor([[2.0, 4.0, 0.0, 0.0]])
+        loss, metrics = reduce_role_losses(
+            token_losses,
+            batch["loss_mask"],
+            batch["roles"],
+            algorithm="satimp",
+            gamma=1.0,
+            alpha=0.0,
+            beta1=2.0,
+            beta2=1.0,
+        )
+        self.assertTrue(torch.isfinite(loss))
+        self.assertNotIn("retain_loss", metrics)
+        self.assertIn("token_probability_p50", metrics)
+        self.assertIn("forget_weight_effective_token_fraction", metrics)
+
     def test_optimizer_step_metrics_aggregate_microbatches(self):
         metrics = aggregate_step_metrics(
             [
@@ -304,38 +403,83 @@ class BatchingTest(unittest.TestCase):
 
 
 class TrainableParameterTest(unittest.TestCase):
-    class FakeModel:
+    class QwenLayer(torch.nn.Module):
         def __init__(self):
-            names = (
-                "decoder.layers.0.mlp.router.weight",
-                "decoder.layers.0.mlp.experts.linear_fc1.weight",
-                "decoder.layers.0.mlp.shared_experts.linear_fc1.weight",
-                "decoder.layers.1.mlp.linear_fc1.weight",
-                "decoder.layers.1.self_attention.linear_qkv.weight",
-            )
-            self.parameters = [(name, torch.nn.Parameter(torch.ones(1))) for name in names]
+            super().__init__()
+            self.layer_number = 1
+            self.mlp = torch.nn.Module()
+            self.mlp.router = torch.nn.Linear(1, 1, bias=False)
+            self.mlp.experts = torch.nn.Linear(1, 1, bias=False)
+            self.mlp.shared_experts = torch.nn.Module()
+            self.mlp.shared_experts.linear_fc1 = torch.nn.Linear(1, 1, bias=False)
+            self.mlp.shared_experts.gate_weight = torch.nn.Parameter(torch.ones(1))
+            self.self_attention = torch.nn.Module()
+            self.self_attention.linear_qkv = torch.nn.Linear(1, 1, bias=False)
 
-        def named_parameters(self):
-            return iter(self.parameters)
+    class GemmaLayer(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layer_number = 1
+            self.mlp = torch.nn.Module()
+            self.mlp.linear_fc1 = torch.nn.Linear(1, 1, bias=False)
+            self.mlp.linear_fc2 = torch.nn.Linear(1, 1, bias=False)
+            self.experts_mlp = torch.nn.Module()
+            self.experts_mlp.router = torch.nn.Linear(1, 1, bias=False)
+            self.experts_mlp.experts = torch.nn.Linear(1, 1, bias=False)
+            self.experts_mlp.scale = torch.nn.Parameter(torch.ones(1))
+            self.experts_mlp.per_expert_scale = torch.nn.Parameter(torch.ones(1))
+            self.self_attention = torch.nn.Module()
+            self.self_attention.linear_qkv = torch.nn.Linear(1, 1, bias=False)
+
+    class FakeModel(torch.nn.Module):
+        def __init__(self, layer):
+            super().__init__()
+            self.decoder = torch.nn.Module()
+            self.decoder.layers = torch.nn.ModuleList([layer])
 
     def test_qwen_trains_routed_and_shared_experts_only(self):
-        model = self.FakeModel()
-        _set_trainable_parameters([model], "moe_experts", model_type="qwen3_5_moe")
-        trainable = {name for name, value in model.parameters if value.requires_grad}
+        model = self.FakeModel(self.QwenLayer())
+        _set_trainable_parameters([model], "expert", model_type="qwen3_5_moe")
+        trainable = {name for name, value in model.named_parameters() if value.requires_grad}
         self.assertEqual(
             trainable,
             {
-                "decoder.layers.0.mlp.experts.linear_fc1.weight",
+                "decoder.layers.0.mlp.experts.weight",
                 "decoder.layers.0.mlp.shared_experts.linear_fc1.weight",
             },
         )
 
-    def test_gemma_also_trains_dense_mlp_blocks(self):
-        model = self.FakeModel()
-        _set_trainable_parameters([model], "moe_experts", model_type="gemma4")
-        trainable = {name for name, value in model.parameters if value.requires_grad}
-        self.assertIn("decoder.layers.1.mlp.linear_fc1.weight", trainable)
-        self.assertNotIn("decoder.layers.0.mlp.router.weight", trainable)
+    def test_gemma_treats_dense_mlp_as_shared_expert(self):
+        model = self.FakeModel(self.GemmaLayer())
+        _set_trainable_parameters([model], "expert", model_type="gemma4")
+        trainable = {name for name, value in model.named_parameters() if value.requires_grad}
+        self.assertIn("decoder.layers.0.mlp.linear_fc1.weight", trainable)
+        self.assertIn("decoder.layers.0.mlp.linear_fc2.weight", trainable)
+        self.assertIn("decoder.layers.0.experts_mlp.experts.weight", trainable)
+        self.assertNotIn("decoder.layers.0.experts_mlp.router.weight", trainable)
+        self.assertNotIn("decoder.layers.0.experts_mlp.scale", trainable)
+
+    def test_rmu_full_is_restricted_to_selected_layers(self):
+        first = self.QwenLayer()
+        first.layer_number = 1
+        second = self.QwenLayer()
+        second.layer_number = 2
+        model = self.FakeModel(first)
+        model.decoder.layers.append(second)
+
+        _set_trainable_parameters(
+            [model],
+            "full",
+            model_type="qwen3_5_moe",
+            train_layers=(1,),
+        )
+
+        trainable = {name for name, value in model.named_parameters() if value.requires_grad}
+        self.assertTrue(trainable)
+        self.assertTrue(all(name.startswith("decoder.layers.1.") for name in trainable))
+        self.assertIn("decoder.layers.1.self_attention.linear_qkv.weight", trainable)
+        self.assertIn("decoder.layers.1.mlp.experts.weight", trainable)
+        self.assertIn("decoder.layers.1.mlp.router.weight", trainable)
 
 
 class StatefulObjectiveTest(unittest.TestCase):
@@ -373,6 +517,35 @@ class StatefulObjectiveTest(unittest.TestCase):
 
 
 class ReferenceAlgorithmTest(unittest.TestCase):
+    def test_all_npo_variants_request_reference_token_nll(self):
+        class FakeModel:
+            def __init__(self):
+                self.labels = None
+
+            def __call__(self, **kwargs):
+                self.labels = kwargs["labels"]
+                return torch.zeros_like(kwargs["labels"], dtype=torch.float32)
+
+        batch = {
+            "input_ids": torch.tensor([[1, 2]]),
+            "position_ids": torch.tensor([[0, 1]]),
+            "attention_mask": torch.tensor([[True, True]]),
+            "labels": torch.tensor([[2, -100]]),
+            "loss_mask": torch.tensor([[True, False]]),
+            "roles": torch.tensor([0]),
+        }
+        for name in ("npo", "pure_npo", "token_npo"):
+            model = FakeModel()
+            config = from_mapping(
+                {
+                    "model": {"path": "/model", "num_experts": 4},
+                    "data": {"forget_cache": "/forget"},
+                    "algorithm": {"name": name},
+                }
+            ).algorithm
+            reference_forward_step(iter([batch]), model, algorithm=config)
+            self.assertTrue(torch.equal(model.labels, batch["labels"]))
+
     def test_reference_parameters_are_frozen_and_eval_only(self):
         model = torch.nn.Linear(2, 2)
         _freeze_reference_parameters([model])
@@ -396,9 +569,28 @@ class ReferenceAlgorithmTest(unittest.TestCase):
         ).algorithm
         loss, metrics = reduce_reference_outputs(current, reference, batch, config=config)
         self.assertTrue(torch.isfinite(loss))
-        self.assertAlmostEqual(metrics["current_sequence_nll"].item(), 3.0)
+        self.assertAlmostEqual(metrics["current_sequence_nll"].item(), 6.0)
         loss.backward()
         self.assertTrue(torch.all(current.grad < 0))
+
+    def test_pure_npo_reduction_normalizes_sequence_length(self):
+        current = torch.tensor([[2.0, 4.0]], requires_grad=True)
+        reference = torch.tensor([[1.0, 1.0]])
+        batch = {
+            "roles": torch.tensor([0]),
+            "loss_mask": torch.tensor([[True, True]]),
+            "labels": torch.tensor([[1, 2]]),
+        }
+        config = from_mapping(
+            {
+                "model": {"path": "/model", "num_experts": 4},
+                "data": {"forget_cache": "/forget"},
+                "algorithm": {"name": "pure_npo", "beta": 0.1},
+            }
+        ).algorithm
+        loss, metrics = reduce_reference_outputs(current, reference, batch, config=config)
+        self.assertTrue(torch.isfinite(loss))
+        self.assertAlmostEqual(metrics["current_sequence_nll"].item(), 3.0)
 
     def test_token_npo_reduction_keeps_per_token_reference_differences(self):
         current = torch.tensor([[2.0, 10.0]], requires_grad=True)
@@ -424,6 +616,7 @@ class ReferenceAlgorithmTest(unittest.TestCase):
 
     def test_reference_windows_bound_undial_logits_only(self):
         self.assertEqual(reference_window_ranges("npo", 8, 2), [(0, 8)])
+        self.assertEqual(reference_window_ranges("pure_npo", 8, 2), [(0, 8)])
         self.assertEqual(reference_window_ranges("token_npo", 8, 2), [(0, 8)])
         self.assertEqual(
             reference_window_ranges("undial", 5, 2),
@@ -461,7 +654,7 @@ class RMUHookTest(unittest.TestCase):
         self.assertEqual(local_pipeline_position([model], target_layer=9), "target")
         _set_trainable_parameters(
             [model],
-            "rmu_experts",
+            "expert",
             model_type="qwen3_5_moe",
             train_layers=[7, 8, 9],
         )
@@ -485,7 +678,7 @@ class RMUHookTest(unittest.TestCase):
         self.assertEqual(local_pipeline_position([model], target_layer=9), "target")
         _set_trainable_parameters(
             [model],
-            "rmu_experts",
+            "expert",
             model_type="qwen3_5_moe",
             train_layers=[9],
         )

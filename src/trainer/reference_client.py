@@ -36,5 +36,8 @@ class ReferenceClient:
     def sequence_nll(self, inputs):
         return self._request("sequence_nll", inputs)
 
+    def token_nll(self, inputs):
+        return self._request("token_nll", inputs)
+
     def logits(self, inputs):
         return self._request("logits", inputs)

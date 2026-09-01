@@ -1,108 +1,62 @@
-# OpenUnlearning — MoE 双分布式后端
+# OpenUnlearning
 
-本项目基于 [OpenUnlearning](https://github.com/locuslab/open-unlearning)，增加了
-Qwen3.5 MoE、Intern-S2、Gemma 4 适配，并同时维护两个训练后端：
+本仓库在 [OpenUnlearning](https://github.com/locuslab/open-unlearning) 基础上，增加了
+Intern-S2、Qwen3.5 MoE 和 Gemma 4 的适配，支持 DeepSpeed 与 Megatron 两套训练后端。
+当前正式实验以 Megatron 为主。
 
-- **DeepSpeed**：Transformers Trainer + Accelerate + ZeRO-3；
-- **Megatron**：项目维护的 Megatron-Core / MCore-Bridge 训练循环。
+> 第一次使用、准备数据、修改配置、启动训练或运行评测，请直接阅读
+> **[Runbook](RUNBOOK.md)**。
 
-两套后端共享模型、数据、算法和训练配置；只有 micro batch、TP/PP/EP 等后端细节
-分别配置。Megatron 是当前主流路径，DeepSpeed 入口继续作为一等公民保留。
+## 项目状态
 
-正式训练请直接参考：[Megatron 完整训练流程](RUNBOOK.md)。
+- 支持 document chunk 与 XTuner soft-pack 两套数据准备方式。
+- Intern-S2 已有 13 种 Megatron 算法配置。
+- Intern-S2 V1、V2 已完成汇总，V3 已完成 GradDiff、NPO、PureNPO、RMU。
+- Gemma 4、Intern-S2、Qwen3.5 MoE 已保存基础性能和 RMU 对比结果。
 
-## 快速开始
+详细状态见 [实验进展](docs/experiment-progress.md)。
 
-```bash
-cp .env.example .env
-set -a; source .env; set +a
+## 环境
 
-# 合并并检查配置
-scripts/inspect.sh --config configs/experiments/interns2_pure_npo.yaml
-
-# 先检查两个后端实际参数
-scripts/train_deepspeed.sh configs/experiments/interns2_pure_npo.yaml --dry-run
-scripts/train_megatron.sh  configs/experiments/interns2_pure_npo.yaml --dry-run
-
-# RJob：默认 Megatron；BACKEND=deepspeed 可切换
-scripts/submit_rjob_example.sh
-
-# Megatron：训练 300 steps，只在终点保存一个 checkpoint
-BACKEND=megatron JOB_NAME=interns2-npo-300steps \
-scripts/submit_rjob_example.sh \
-  --train-steps 300 --save-only-at-end \
-  --output-dir saves/interns2-pure-npo-300steps
-
-# Megatron：完整训练 1 epoch，保存 step 300 和 epoch 1
-scripts/train_megatron.sh configs/experiments/interns2_pure_npo.yaml \
-  --train-epochs 1 --save-at-step 300 --save-at-epoch-end --dry-run
-```
-
-不需要为算法复制 shell 文件：
-
-```bash
-scripts/train_megatron.sh configs/experiments/interns2_pure_npo.yaml \
-  --algorithm grad_diff --profile wmdp_moe_default --dry-run
-```
-
-## 目录
+共享集群 Conda 环境：
 
 ```text
-src/open_unlearning/       稳定 CLI、共享配置和双后端适配
-src/megatron_unlearning/   Megatron/MCore 训练实现
-src/trainer/               DeepSpeed/HF trainers
-src/data/                  共享数据与 token cache loader
-src/evals/                 上游评测实现
-configs/                   组件、后端布局和实验
-scripts/                   维护入口与唯一 RJob 示例
-tests/                     全部源码测试
-evaluations/               原始评测结果与汇总
-docs/                      工程、迁移和实验文档
+/mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/envs/open-unlearning
 ```
 
-## 运行资产
+## 常用入口
 
-以下目录包含环境、数据、权重或结果，不属于源码，也不会被自动删除：
-
-- `envs/`
-- `data_cache/`
-- `saves/`
-- `outputs/`
-- `wandb/`、`wandb_offline/`
-- `scripts/**/logs/`
-- `evaluations/**/lm_eval_results_*/`
-
-当前布局保持兼容。新部署推荐设置：
-
-```bash
-export OU_RUNTIME_ROOT=/path/to/open-unlearning-runtime
-```
-
-详见 [运行资产规则](docs/runtime-layout.md)。
-
-## 验证
-
-```bash
-PYTHONPATH=src envs/open-unlearning/bin/python -m unittest discover -s tests -v
-RUFF_CACHE_DIR=/tmp/open-unlearning-ruff \
-  envs/open-unlearning/bin/python -m ruff check src/open_unlearning tests
-```
+| 内容 | 位置 |
+| --- | --- |
+| 完整使用流程 | [RUNBOOK.md](RUNBOOK.md) |
+| 训练配置 | [configs/training/](configs/training/) |
+| 数据处理配置 | [configs/data_processing/](configs/data_processing/) |
+| 一键启动脚本 | [scripts/](scripts/) |
+| 评测结果 | [evaluations/](evaluations/) |
+| 工程文档 | [docs/](docs/) |
 
 ## 文档
 
-- [架构](docs/architecture.md)
-- [配置与算法能力矩阵](configs/README.md)
-- [运行资产布局](docs/runtime-layout.md)
-- [重构状态](docs/refactor-status.md)
-- [Megatron 迁移记录](docs/megatron_migration.md)
-- [正式 Intern-S2 结果](evaluations/unlearning/interns2/RESULTS_SUMMARY.md)
+| 文档 | 内容 |
+| --- | --- |
+| [Runbook](RUNBOOK.md) | 数据准备、配置、启动、RJob、训练与评测 |
+| [实验进展](docs/experiment-progress.md) | 当前完成情况、版本状态和结果入口 |
+| [文档索引](docs/README.md) | 所有长期维护文档 |
+| [配置说明](configs/README.md) | 配置结构、算法与后端支持情况 |
+| [Intern-S2 结果](evaluations/unlearning/interns2/RESULTS_SUMMARY.md) | V1、V2、V3 数据汇总 |
+| [全部评测结果](evaluations/README.md) | Baseline、RMU 和 unlearning 结果索引 |
+
+## 主要目录
+
+```text
+configs/       数据处理与训练配置
+scripts/       配置检查、训练、评测和 RJob 入口
+src/           DeepSpeed、Megatron 与公共实现
+evaluations/   正式评测结果
+docs/          长期维护文档
+```
 
 ## 上游与许可证
 
-原始 OpenUnlearning 由 Vineeth Dorna、Anmol Mekala 等维护。使用本项目时请同时遵循
-上游项目的引用要求。技术报告：
-
-> OpenUnlearning: Accelerating LLM Unlearning via Unified Benchmarking of Methods
-> and Metrics, arXiv:2506.12618.
-
-项目采用 [MIT License](LICENSE)。
+原始项目：[locuslab/open-unlearning](https://github.com/locuslab/open-unlearning)。
+本项目采用 [MIT License](LICENSE)。

@@ -13,24 +13,28 @@ from typing import Any
 
 import yaml
 
+from open_unlearning.trainable_parameters import normalize_trainable_param_mode
+
 from .parallel import ParallelLayout
 
 SUPPORTED_ALGORITHMS = {
     "grad_ascent",
     "grad_diff",
     "simnpo",
+    "token_simnpo",
     "wga",
     "satimp",
     "ceu",
     "pdu",
     "npo",
+    "pure_npo",
     "token_npo",
     "undial",
     "rmu",
 }
-RETAIN_ALGORITHMS = {"grad_diff", "simnpo", "wga", "satimp", "pdu", "rmu"}
+RETAIN_ALGORITHMS = {"grad_diff", "simnpo", "token_simnpo", "pdu", "rmu"}
 FULL_LOGIT_ALGORITHMS = {"ceu", "pdu", "undial"}
-REFERENCE_ALGORITHMS = {"npo", "token_npo", "undial", "rmu"}
+REFERENCE_ALGORITHMS = {"npo", "pure_npo", "token_npo", "undial", "rmu"}
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,7 @@ class DataSource:
     retain_cache: str | None = None
     sequence_length: int = 1024
     pad_token_id: int | None = None
+    shuffle: bool = True
 
 
 @dataclass(frozen=True)
@@ -115,6 +120,10 @@ class OptimizerConfig:
     adam_beta1: float = 0.9
     adam_beta2: float = 0.95
     adam_eps: float = 1e-8
+    lr_scheduler_type: str = "cosine"
+    lr_warmup_ratio: float = 0.03
+    lr_warmup_init: float = 0.0
+    lr_decay_steps: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -131,7 +140,7 @@ class TrainingConfig:
     wandb_dir: str = "wandb_offline"
     seed: int = 3
     bf16: bool = True
-    trainable_param_mode: str = "moe_experts"
+    trainable_param_mode: str = "expert"
     output_dir: str = "outputs/megatron"
 
 
@@ -187,6 +196,19 @@ class MegatronRunConfig:
             raise ValueError("save_steps must not contain duplicates")
         if self.training.wandb_mode != "offline":
             raise ValueError("Megatron W&B logging must use offline mode")
+        if self.optimizer.lr_scheduler_type != "cosine":
+            raise ValueError("only cosine lr_scheduler_type is currently supported")
+        if not 0.0 <= self.optimizer.lr_warmup_ratio < 1.0:
+            raise ValueError("lr_warmup_ratio must be in [0, 1)")
+        if self.optimizer.lr_warmup_init < 0.0:
+            raise ValueError("lr_warmup_init must be nonnegative")
+        if self.optimizer.lr_warmup_init > self.optimizer.learning_rate:
+            raise ValueError("lr_warmup_init cannot exceed learning_rate")
+        if not 0.0 <= self.optimizer.min_learning_rate <= self.optimizer.learning_rate:
+            raise ValueError("min_learning_rate must be between 0 and learning_rate")
+        if self.optimizer.lr_decay_steps != "auto":
+            raise ValueError("lr_decay_steps must be 'auto' so it follows the training endpoint")
+        normalize_trainable_param_mode(self.training.trainable_param_mode)
         if self.algorithm.name == "rmu":
             if self.algorithm.target_layer < 0:
                 raise ValueError("RMU target_layer must be nonnegative")
@@ -228,7 +250,9 @@ class MegatronRunConfig:
 
 
 def algorithm_uses_retain(config: AlgorithmConfig) -> bool:
-    return config.name in RETAIN_ALGORITHMS or (config.name == "undial" and config.alpha != 0.0)
+    return config.name in RETAIN_ALGORITHMS or (
+        config.name in {"wga", "satimp", "undial"} and config.alpha != 0.0
+    )
 
 
 def _require_directory(value: str, field_name: str) -> None:

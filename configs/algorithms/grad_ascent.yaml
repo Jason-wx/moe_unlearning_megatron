@@ -1,4 +1,0 @@
-algorithm:
-  name: grad_ascent
-  deepspeed_trainer: GradAscent
-  gamma: 1.0

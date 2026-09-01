@@ -25,6 +25,10 @@ class SatImp(GradDiff):
             model=model, inputs=forget_inputs, beta1=self.beta1, beta2=self.beta2
         )
 
+        if self.alpha == 0.0:
+            loss = self.gamma * forget_loss
+            return (loss, forget_outputs) if return_outputs else loss
+
         retain_inputs = inputs["retain"]
         retain_inputs = {
             "input_ids": retain_inputs["input_ids"],

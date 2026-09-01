@@ -1,7 +1,0 @@
-model:
-  name: gemma4
-  hydra_name: Gemma-4-26B-A4B
-  path: ${GEMMA4_MODEL_PATH:-/mnt/shared-storage-gpfs2/gpfs2-shared-public/huggingface/zskj-hub/models--google--gemma-4-26B-A4B}
-  handler: AutoModelForMultimodalLM
-  num_experts: 128
-  trust_remote_code: true

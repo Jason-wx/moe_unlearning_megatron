@@ -13,13 +13,15 @@ from megatron_unlearning.objectives import (
     grad_ascent_objective,
     grad_diff_objective,
     masked_mean,
+    npo_objective,
     parallel_rmu_mse,
     pdu_forget_objective,
     pure_npo_objective,
     rmu_mse_statistics,
     satimp_objective,
     simnpo_objective,
-    token_pure_npo_objective,
+    token_npo_objective,
+    token_simnpo_objective,
     undial_objective,
     wga_objective,
 )
@@ -53,6 +55,15 @@ class ObjectiveTests(unittest.TestCase):
         high, _ = simnpo_objective(torch.full((1, 2), 20.0), mask, beta=0.1)
         self.assertLess(high.item(), low.item())
 
+    def test_simnpo_reduces_sequence_before_logistic_transform(self):
+        nll = torch.tensor([[0.0, 10.0]])
+        mask = torch.ones_like(nll, dtype=torch.bool)
+        sequence_loss, _ = simnpo_objective(nll, mask, beta=0.1)
+        token_loss, _ = token_simnpo_objective(nll, mask, beta=0.1)
+        expected = -20.0 * torch.nn.functional.logsigmoid(torch.tensor(0.5))
+        self.assertAlmostEqual(sequence_loss.item(), expected.item())
+        self.assertNotAlmostEqual(sequence_loss.item(), token_loss.item())
+
     def test_wga_uses_detached_probability_weight(self):
         nll = torch.tensor([[1.0, 2.0]], requires_grad=True)
         mask = torch.ones_like(nll, dtype=torch.bool)
@@ -69,6 +80,13 @@ class ObjectiveTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(loss))
         self.assertTrue(torch.isfinite(nll.grad).all())
         self.assertGreaterEqual(metrics["forget_weight"], 0)
+        self.assertAlmostEqual(metrics["token_probability_mean"].item(), torch.exp(-nll.detach()).mean().item())
+        self.assertLessEqual(metrics["token_probability_p10"], metrics["token_probability_p50"])
+        self.assertLessEqual(metrics["token_probability_p50"], metrics["token_probability_p90"])
+        self.assertLessEqual(metrics["forget_weight_p10"], metrics["forget_weight_p50"])
+        self.assertLessEqual(metrics["forget_weight_p50"], metrics["forget_weight_p90"])
+        self.assertGreaterEqual(metrics["forget_weight_effective_token_fraction"], 0.0)
+        self.assertLessEqual(metrics["forget_weight_effective_token_fraction"], 1.0)
 
     def test_ceu_pushes_down_the_correct_logit(self):
         logits = torch.tensor([[[2.0, 1.0, 0.0], [0.5, 1.5, 0.0]]], requires_grad=True)
@@ -92,6 +110,15 @@ class ObjectiveTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["reference_sequence_nll"].item(), 1.0)
         self.assertTrue(torch.isfinite(loss))
 
+    def test_original_npo_uses_summed_sequence_nll(self):
+        current = torch.tensor([[2.0, 2.0, 50.0], [4.0, 4.0, 4.0]])
+        reference = torch.ones_like(current)
+        mask = torch.tensor([[True, True, False], [True, True, True]])
+        loss, metrics = npo_objective(current, reference, mask, beta=0.1)
+        self.assertAlmostEqual(metrics["current_sequence_nll"].item(), 8.0)
+        self.assertAlmostEqual(metrics["reference_sequence_nll"].item(), 2.5)
+        self.assertTrue(torch.isfinite(loss))
+
     def test_pure_npo_skips_individually_empty_sequences(self):
         current = torch.tensor([[2.0, 2.0], [99.0, 99.0]])
         reference = torch.tensor([[1.0, 1.0], [88.0, 88.0]])
@@ -109,11 +136,11 @@ class ObjectiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no valid sequences"):
             pure_npo_objective(values, values, mask, beta=0.1)
 
-    def test_token_pure_npo_applies_sigmoid_before_masked_mean(self):
+    def test_token_npo_applies_sigmoid_before_masked_mean(self):
         current = torch.tensor([[2.0, 10.0, 99.0]], requires_grad=True)
         reference = torch.ones_like(current)
         mask = torch.tensor([[True, True, False]])
-        loss, metrics = token_pure_npo_objective(current, reference, mask, beta=0.1)
+        loss, metrics = token_npo_objective(current, reference, mask, beta=0.1)
         expected = (-20.0 * torch.nn.functional.logsigmoid(torch.tensor([0.1, 0.9]))).mean()
         sequence_loss, _ = pure_npo_objective(current, reference, mask, beta=0.1)
         self.assertAlmostEqual(loss.item(), expected.item())

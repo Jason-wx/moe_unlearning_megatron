@@ -1,7 +1,0 @@
-algorithm:
-  name: altpo
-  deepspeed_trainer: DPO
-  beta: 0.1
-  gamma: 1.0
-  alpha: 1.0
-  retain_loss_type: NLL

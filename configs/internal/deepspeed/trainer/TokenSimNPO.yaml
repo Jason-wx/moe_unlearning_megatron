@@ -1,0 +1,5 @@
+defaults:
+  - finetune
+
+handler: TokenSimNPO
+method_args: {}

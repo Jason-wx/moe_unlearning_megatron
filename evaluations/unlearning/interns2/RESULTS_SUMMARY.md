@@ -1,76 +1,79 @@
-# Intern-S2 Unlearning 实验结果汇总
+# Intern-S2 遗忘评测汇总
 
-更新时间：2026-08-19
+评测目标是降低 WMDP-Bio，同时尽量保持 MMLU。数值均为准确率：WMDP-Bio
+越低越好，MMLU 越高越好。
 
-## 1. 评测说明
+| 模型 | WMDP-Bio ↓ | MMLU ↑ |
+| --- | ---: | ---: |
+| Base | 83.66% ± 1.04% | 85.15% ± 0.29% |
 
-- 模型：Intern-S2-base05。
-- 遗忘目标：WMDP-Bio。
-- `WMDP-Bio Accuracy`：越低表示模型在目标遗忘数据上的正确率越低，即遗忘越强。
-- `MMLU Accuracy`：越高表示通用知识与推理能力保持得越好。
-- 表中数值为 `accuracy ± standard error`，均换算为百分比。
-- 当前目录没有未执行 unlearning 的基础模型结果，因此本表只比较不同 unlearning 方法，不能直接计算相对基础模型的变化量。
+## 版本概览
 
-## 2. 正式结果
+| 版本 | 主要变化 | 已评测内容 |
+| --- | --- | --- |
+| [V1](interns2-Megatron-V1/RESULTS_SUMMARY.md) | 1024-token chunk、global batch 128、expert-only、constant LR | 11 个算法的 step 300 和 epoch 1 |
+| [V2](interns2-Megatron-V2/V2_CHANGES.md) | 延续 V1 数据与训练方式，重点调 WGA、SatImp；另有 6-GPU RMU | WGA、SatImp、RMU |
+| [V3](interns2-Megatron-V3/) | 4096-token XTuner soft-pack、global batch 4、full trainable、gradient clip 1.0、warmup + cosine | GradDiff、NPO、PureNPO、RMU 的 epoch 1 |
 
-结果按 WMDP-Bio Accuracy 从低到高排列。
+三个版本同时改变了数据组织、batch、可训练参数范围或调度策略，因此结果适合比较最终效果，
+不应视为严格的单变量消融。
 
-| 排名 | 方法 | WMDP-Bio ↓ | MMLU ↑ | 简要观察 |
-|---:|---|---:|---:|---|
-| 1 | CEU | 24.04% ± 1.20% | 27.44% ± 0.37% | 遗忘很强，但通用能力几乎完全损坏 |
-| 2 | GradAscent | 24.12% ± 1.20% | 26.74% ± 0.37% | 遗忘很强，但通用能力几乎完全损坏 |
-| 3 | RMU | 37.16% ± 1.35% | 83.43% ± 0.30% | 当前结果中遗忘与能力保持的综合表现最好 |
-| 4 | PureNPO | 38.88% ± 1.37% | 62.04% ± 0.37% | 遗忘明显，但通用能力下降严重 |
-| 5 | GradDiff | 70.38% ± 1.28% | 83.85% ± 0.30% | 保持能力较好，遗忘程度中等 |
-| 6 | TokenSimNPO | 74.39% ± 1.22% | 84.16% ± 0.30% | 比原版 SimNPO 遗忘更强，MMLU 基本保持 |
-| 7 | PDU | 80.75% ± 1.11% | 83.30% ± 0.30% | 能力保持尚可，但遗忘效果较弱 |
-| 8 | SimNPO | 81.30% ± 1.09% | 83.88% ± 0.30% | 能力保持较好，但遗忘效果较弱 |
-| 9 | WGA | 82.09% ± 1.08% | 84.10% ± 0.30% | 能力保持较好，但遗忘效果较弱 |
-| 10 | NPO | 82.56% ± 1.06% | 84.89% ± 0.29% | MMLU 很高，但几乎没有明显遗忘 |
-| 11 | SatImp | 82.72% ± 1.06% | 83.90% ± 0.30% | 能力保持较好，但几乎没有明显遗忘 |
-| 12 | UNDIAL | 83.97% ± 1.03% | 84.89% ± 0.29% | MMLU 很高，但目标遗忘最弱 |
+## V1：第一轮完整算法对比
 
-## 3. 关键对比
+V1 用统一配置横向比较 11 个算法。GradAscent 遗忘最强，但 MMLU 严重下降；
+在兼顾两项指标时，RMU 和 GradDiff 更有代表性。PDU、SatImp、WGA、UNDIAL
+在该配置下几乎没有产生有效遗忘。
 
-### NPO 与 PureNPO
+| 代表结果 | Checkpoint | WMDP-Bio ↓ | MMLU ↑ |
+| --- | --- | ---: | ---: |
+| GradAscent | epoch 1 | 24.67% | 23.53% |
+| GradDiff | epoch 1 | 69.21% | 84.26% |
+| RMU | epoch 1 | 68.26% | 84.85% |
+| TokenSimNPO | epoch 1 | 79.26% | 84.16% |
 
-| 方法 | WMDP-Bio ↓ | MMLU ↑ |
-|---|---:|---:|
-| NPO | 82.56% ± 1.06% | 84.89% ± 0.29% |
-| PureNPO | 38.88% ± 1.37% | 62.04% ± 0.37% |
+完整的 22 组 checkpoint 指标和逐算法配置见
+[V1 结果](interns2-Megatron-V1/RESULTS_SUMMARY.md)。
 
-PureNPO 相比原版 NPO 将 WMDP-Bio 降低了 43.68 个百分点，但 MMLU 同时降低了 22.85 个百分点。它显著增强了遗忘，同时造成了严重的通用能力损失。
+## V2：定向调参与独立 RMU
 
-### SimNPO 与 TokenSimNPO
+V2 不再做全算法扫描，主要验证 WGA、SatImp 和 RMU。WGA 原始配置出现破坏性退化，
+调成 forget-only、`beta=0.5`、`lr=1e-6` 后明显恢复；SatImp 增强了遗忘，
+但 MMLU 损失仍较大。6-GPU RMU 在保持 MMLU 的同时，将 WMDP-Bio 降至 37.55%。
 
-| 方法 | WMDP-Bio ↓ | MMLU ↑ |
-|---|---:|---:|
-| SimNPO | 81.30% ± 1.09% | 83.88% ± 0.30% |
-| TokenSimNPO | 74.39% ± 1.22% | 84.16% ± 0.30% |
+| 结果 | Checkpoint | WMDP-Bio ↓ | MMLU ↑ |
+| --- | --- | ---: | ---: |
+| WGA 原始配置 | epoch 1 | 28.12% | 26.39% |
+| WGA 调参后 | step 300 | 76.20% | 82.32% |
+| SatImp 调参后 | epoch 1 | 66.85% | 76.13% |
+| RMU，6 GPU | epoch 1 | 37.55% | 84.67% |
 
-TokenSimNPO 相比原版 SimNPO 将 WMDP-Bio 降低了 6.91 个百分点，MMLU 反而提高约 0.28 个百分点。该改动在不明显损害通用能力的情况下增强了遗忘。
+全部 V2 checkpoint 见 [V2 结果](interns2-Megatron-V2/V2_CHANGES.md)。
 
-## 4. 总体结论
+## V3：当前统一训练配置
 
-1. **RMU 的综合表现最突出**：WMDP-Bio 为 37.16%，同时保留了 83.43% 的 MMLU，明显优于同等遗忘强度附近的 PureNPO。
-2. **CEU 和 GradAscent 属于破坏性遗忘**：WMDP-Bio 已接近四选一随机水平，但 MMLU 也降至约 27%，说明它们不是只移除目标知识，而是大范围损坏了模型能力。
-3. **PureNPO 的遗忘很强但代价过高**：相较原版 NPO，它解决了“几乎不遗忘”的问题，但 MMLU 降幅过大。
-4. **TokenSimNPO 是有效的温和改进**：它优于原版 SimNPO，在维持 MMLU 的同时获得了更低的 WMDP-Bio，但遗忘强度仍明显弱于 RMU。
-5. **NPO、PDU、SatImp、SimNPO、WGA 和 UNDIAL 的正式结果整体偏保守**：它们保留了较高 MMLU，但 WMDP-Bio 仍然很高，说明当前参数下目标遗忘不足。
+V3 切换到 4096-token XTuner soft-pack，并统一使用 micro/global batch 4、
+`trainable_param_mode=full`、`gradient_clip=1.0`、3% warmup 和 cosine decay。
+当前已完成 4 个算法。
 
-## 5. 原始结果目录
+| 算法 | WMDP-Bio ↓ | 相对 Base | MMLU ↑ | 相对 Base |
+| --- | ---: | ---: | ---: | ---: |
+| GradDiff | 68.89% | -14.77 | 83.18% | -1.97 |
+| NPO | 84.37% | +0.71 | 84.87% | -0.28 |
+| PureNPO | 78.32% | -5.34 | 78.82% | -6.33 |
+| RMU | 52.00% | -31.66 | 85.02% | -0.14 |
 
-| 方法 | 结果文件 |
-|---|---|
-| CEU | `lm_eval_results_ceu_wmdp_mmlu/result.json` |
-| GradAscent | `lm_eval_results_grad_ascent_wmdp_mmlu/result.json` |
-| GradDiff | `lm_eval_results_grad_diff_wmdp_mmlu/result.json` |
-| NPO | `lm_eval_results_npo_wmdp_mmlu/result.json` |
-| PDU | `lm_eval_results_pdu_wmdp_mmlu/result.json` |
-| PureNPO | `lm_eval_results_pure_npo_wmdp_mmlu/result.json` |
-| RMU | `lm_eval_results_rmu_wmdp_mmlu/result.json` |
-| SatImp | `lm_eval_results_satimp_wmdp_mmlu/result.json` |
-| SimNPO | `lm_eval_results_simnpo_wmdp_mmlu/result.json` |
-| TokenSimNPO | `lm_eval_results_token_simnpo_wmdp_mmlu/result.json` |
-| UNDIAL | `lm_eval_results_undial_wmdp_mmlu/result.json` |
-| WGA | `lm_eval_results_wga_wmdp_mmlu/result.json` |
+当前 V3 中 RMU 的综合效果最好；NPO 基本保持 MMLU，但没有产生遗忘；
+PureNPO 的 MMLU 损失大于遗忘收益。原始结果在各算法的 `result.json` 中。
+
+## RMU 跨版本参考
+
+| 来源 | WMDP-Bio ↓ | MMLU ↑ |
+| --- | ---: | ---: |
+| V1 RMU，epoch 1 | 68.26% | 84.85% |
+| V2 RMU，epoch 1 | 37.55% | 84.67% |
+| V3 RMU，epoch 1 | 52.00% | 85.02% |
+| [独立 HF/DeepSpeed RMU](lm_eval_results_rmu_wmdp_mmlu/result.json) | 37.16% | 83.43% |
+
+V2 RMU 的遗忘最强；V3 RMU 的 MMLU 保持最好。独立 RMU 不属于 Megatron
+V1/V2/V3，其对应权重仍保存在
+`saves/unlearn/interns2_moe_rmu_bio_l10_fixed_wmdp_forget_fineweb_retain_cached`。

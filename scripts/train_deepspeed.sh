@@ -10,9 +10,7 @@ export OU_REPO_ROOT=${OU_REPO_ROOT:-${REPO_ROOT}}
 export PYTHONPATH="${REPO_ROOT}/src${PYTHONPATH:+:${PYTHONPATH}}"
 export HF_MODULES_CACHE=${HF_MODULES_CACHE:-/tmp/open-unlearning-hf-modules}
 export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-/tmp/open-unlearning-triton}
-export WANDB_MODE=offline
 
 cd "${REPO_ROOT}"
 exec "${PYTHON_BIN}" -m open_unlearning.cli train \
   --backend deepspeed --config "${CONFIG}" "$@"
-

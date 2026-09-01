@@ -12,11 +12,13 @@ from .batching import FORGET_ROLE, RETAIN_ROLE
 from .config import FULL_LOGIT_ALGORITHMS, AlgorithmConfig
 from .objectives import (
     ceu_objective,
+    npo_objective,
     pdu_forget_objective,
     pure_npo_objective,
     satimp_objective,
     simnpo_objective,
-    token_pure_npo_objective,
+    token_npo_objective,
+    token_simnpo_objective,
     undial_objective,
     vocab_parallel_token_nll,
     wga_objective,
@@ -79,20 +81,27 @@ def reduce_role_losses(
     }
     if algorithm == "grad_ascent":
         return gamma * forget_objective, metrics
-    if algorithm == "simnpo":
-        forget_objective, extra = simnpo_objective(losses, forget_role_mask, beta=beta, delta=delta)
+    if algorithm in {"simnpo", "token_simnpo"}:
+        objective = simnpo_objective if algorithm == "simnpo" else token_simnpo_objective
+        forget_objective, extra = objective(losses, forget_role_mask, beta=beta, delta=delta)
         metrics.update({key: value.detach() for key, value in extra.items()})
         metrics["forget_loss"] = forget_objective.detach()
     elif algorithm == "wga":
         forget_objective, extra = wga_objective(losses, forget_role_mask, beta=beta)
         metrics.update({key: value.detach() for key, value in extra.items()})
         metrics["forget_loss"] = forget_objective.detach()
+        if alpha == 0.0:
+            metrics["weighted_forget_loss"] = (gamma * forget_objective).detach()
+            return gamma * forget_objective, metrics
     elif algorithm == "satimp":
         forget_objective, extra = satimp_objective(
             losses, forget_role_mask, beta1=beta1, beta2=beta2
         )
         metrics.update({key: value.detach() for key, value in extra.items()})
         metrics["forget_loss"] = forget_objective.detach()
+        if alpha == 0.0:
+            metrics["weighted_forget_loss"] = (gamma * forget_objective).detach()
+            return gamma * forget_objective, metrics
     elif algorithm != "grad_diff":
         raise ValueError(f"unsupported token-loss algorithm: {algorithm}")
 
@@ -168,8 +177,12 @@ def reduce_reference_outputs(
     if not torch.any(forget_rows):
         raise ValueError("reference algorithm batch contains no forget rows")
 
-    if config.name in {"npo", "token_npo"}:
-        objective = pure_npo_objective if config.name == "npo" else token_pure_npo_objective
+    if config.name in {"npo", "pure_npo", "token_npo"}:
+        objective = {
+            "npo": npo_objective,
+            "pure_npo": pure_npo_objective,
+            "token_npo": token_npo_objective,
+        }[config.name]
         loss, metrics = objective(
             output[forget_rows].float(),
             reference_output.float(),
@@ -218,7 +231,7 @@ def _loss_func(
     loss_scale: float,
     output: torch.Tensor,
 ):
-    if config.name in {"npo", "token_npo", "undial"}:
+    if config.name in {"npo", "pure_npo", "token_npo", "undial"}:
         if reference_outputs is None:
             raise ValueError(f"{config.name} requires reference outputs")
         try:
@@ -296,7 +309,11 @@ def reference_forward_step(data_iterator, model, *, algorithm: AlgorithmConfig):
         input_ids=reference_batch["input_ids"],
         position_ids=reference_batch["position_ids"],
         attention_mask=reference_batch["attention_mask"],
-        labels=(reference_batch["labels"] if algorithm.name in {"npo", "token_npo"} else None),
+        labels=(
+            reference_batch["labels"]
+            if algorithm.name in {"npo", "pure_npo", "token_npo"}
+            else None
+        ),
         loss_mask=reference_batch["loss_mask"],
     )
 

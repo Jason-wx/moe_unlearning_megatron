@@ -124,7 +124,29 @@ def simnpo_objective(
     beta: float = 0.1,
     delta: float = 0.0,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    """Token-level SimNPO objective used by the long-document adaptation."""
+    """Original sequence-level SimNPO with valid-token normalization."""
+
+    if beta <= 0:
+        raise ValueError("beta must be positive")
+    sequence_nll = masked_sequence_mean(forget_token_nll, forget_mask)
+    sigmoid_argument = beta * (sequence_nll - delta)
+    sequence_loss = -2.0 / beta * F.logsigmoid(sigmoid_argument)
+    gradient_weight = 2.0 * torch.sigmoid(-sigmoid_argument)
+    return sequence_loss.mean(), {
+        "forget_mean_nll": sequence_nll.mean(),
+        "sigmoid_argument": sigmoid_argument.mean(),
+        "forget_gradient_weight": gradient_weight.mean(),
+    }
+
+
+def token_simnpo_objective(
+    forget_token_nll: torch.Tensor,
+    forget_mask: torch.Tensor,
+    *,
+    beta: float = 0.1,
+    delta: float = 0.0,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """SimNPO with the bounded objective applied independently per token."""
 
     if beta <= 0:
         raise ValueError("beta must be positive")
@@ -170,8 +192,34 @@ def satimp_objective(
     importance = (1.0 - probability).clamp_min(0.0).pow(beta2)
     weight = saturation * importance
     loss = -masked_mean(weight * forget_token_nll, forget_mask)
+    valid = forget_mask.bool()
+    valid_probability = probability[valid].float()
+    valid_weight = weight[valid].float()
+    if valid_probability.numel() == 0:
+        raise ValueError("forget batch contains no valid tokens")
+    probability_quantiles = torch.quantile(
+        valid_probability, valid_probability.new_tensor([0.1, 0.5, 0.9])
+    )
+    weight_quantiles = torch.quantile(
+        valid_weight, valid_weight.new_tensor([0.1, 0.5, 0.9])
+    )
+    weight_square_sum = valid_weight.square().sum()
+    effective_token_fraction = valid_weight.sum().square() / (
+        valid_weight.numel() * weight_square_sum.clamp_min(torch.finfo(valid_weight.dtype).tiny)
+    )
     return loss, {
-        "forget_weight": masked_mean(weight, forget_mask),
+        "token_probability_mean": valid_probability.mean(),
+        "token_probability_p10": probability_quantiles[0],
+        "token_probability_p50": probability_quantiles[1],
+        "token_probability_p90": probability_quantiles[2],
+        "forget_weight": valid_weight.mean(),
+        "forget_weight_p10": weight_quantiles[0],
+        "forget_weight_p50": weight_quantiles[1],
+        "forget_weight_p90": weight_quantiles[2],
+        "forget_weight_max": valid_weight.max(),
+        "forget_weight_below_1e-3_fraction": (valid_weight < 1.0e-3).float().mean(),
+        "forget_weight_below_1e-4_fraction": (valid_weight < 1.0e-4).float().mean(),
+        "forget_weight_effective_token_fraction": effective_token_fraction,
         "saturation_weight": masked_mean(saturation, forget_mask),
         "importance_weight": masked_mean(importance, forget_mask),
     }
@@ -267,6 +315,39 @@ def vocab_parallel_token_nll(
     return losses.masked_fill(labels.eq(-100), 0.0)
 
 
+def npo_objective(
+    current_token_nll: torch.Tensor,
+    reference_token_nll: torch.Tensor,
+    token_mask: torch.Tensor,
+    *,
+    beta: float = 0.1,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Original NPO: the negative/loser-only DPO term over sequence sums."""
+
+    if beta <= 0:
+        raise ValueError("beta must be positive")
+    if current_token_nll.shape != reference_token_nll.shape:
+        raise ValueError("current/reference token NLL shapes must match")
+    _validate_token_tensors(current_token_nll, token_mask)
+    mask = token_mask.to(device=current_token_nll.device, dtype=current_token_nll.dtype)
+    valid_sequences = mask.sum(dim=-1).gt(0)
+    if not torch.any(valid_sequences):
+        raise ValueError("batch contains no valid sequences")
+    current = (current_token_nll * mask).sum(dim=-1)[valid_sequences]
+    reference = (reference_token_nll * mask).sum(dim=-1)[valid_sequences]
+    logit = beta * (current - reference)
+    loss = (-2.0 / beta * F.logsigmoid(logit)).mean()
+    return loss, {
+        "current_sequence_nll": current.mean(),
+        "reference_sequence_nll": reference.mean(),
+        "sequence_nll_difference": (current - reference).mean(),
+        "npo_logit": logit.mean(),
+        "sequence_gradient_weight": (2.0 * torch.sigmoid(-logit)).mean(),
+        "valid_sequences": valid_sequences.sum().detach(),
+        "skipped_empty_sequences": (~valid_sequences).sum().detach(),
+    }
+
+
 def pure_npo_objective(
     current_token_nll: torch.Tensor,
     reference_token_nll: torch.Tensor,
@@ -299,14 +380,14 @@ def pure_npo_objective(
     }
 
 
-def token_pure_npo_objective(
+def token_npo_objective(
     current_token_nll: torch.Tensor,
     reference_token_nll: torch.Tensor,
     token_mask: torch.Tensor,
     *,
     beta: float = 0.1,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    """Pure NPO with an independent bounded objective for each valid token."""
+    """NPO with an independent bounded objective for each valid token."""
 
     if beta <= 0:
         raise ValueError("beta must be positive")
@@ -326,6 +407,10 @@ def token_pure_npo_objective(
         # Magnitude of dL/d(current NLL), before gamma and token averaging.
         "token_gradient_weight": masked_mean(2.0 * torch.sigmoid(-logit), token_mask),
     }
+
+
+# Backward-compatible Python symbol. Algorithm configuration uses ``token_npo``.
+token_pure_npo_objective = token_npo_objective
 
 
 def undial_objective(

@@ -1,6 +1,0 @@
-defaults:
-  - finetune
-
-handler: CEU
-method_args:
-  ignore_first_n_answer_tokens: 1

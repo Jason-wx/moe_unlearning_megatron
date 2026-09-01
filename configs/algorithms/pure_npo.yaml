@@ -1,6 +1,0 @@
-algorithm:
-  # Explicit name distinguishes forget-only NPO from historical NPO+retain.
-  name: pure_npo
-  deepspeed_trainer: NPO
-  beta: 0.1
-  gamma: 1.0

@@ -1,27 +1,26 @@
+import logging
+from typing import Any
+
 import torch
-from typing import Dict, Any
 from omegaconf import DictConfig, OmegaConf
 from transformers import Trainer, TrainingArguments
 
 from trainer.base import FinetuneTrainer
+from trainer.unlearn.ceu import CEU
+from trainer.unlearn.dpo import DPO
 from trainer.unlearn.grad_ascent import GradAscent
 from trainer.unlearn.grad_diff import GradDiff
-from trainer.unlearn.npo import NPO
-from trainer.unlearn.dpo import DPO
-from trainer.unlearn.simnpo import SimNPO
-from trainer.unlearn.rmu import RMU
-from trainer.unlearn.undial import UNDIAL
-from trainer.unlearn.ceu import CEU
-from trainer.unlearn.satimp import SatImp
-from trainer.unlearn.wga import WGA
+from trainer.unlearn.npo import NPO, PureNPO, TokenNPO
 from trainer.unlearn.pdu import PDU
-
-
-import logging
+from trainer.unlearn.rmu import RMU
+from trainer.unlearn.satimp import SatImp
+from trainer.unlearn.simnpo import SimNPO, TokenSimNPO
+from trainer.unlearn.undial import UNDIAL
+from trainer.unlearn.wga import WGA
 
 logger = logging.getLogger(__name__)
 
-TRAINER_REGISTRY: Dict[str, Any] = {}
+TRAINER_REGISTRY: dict[str, Any] = {}
 
 
 def _register_trainer(trainer_class):
@@ -91,8 +90,11 @@ _register_trainer(FinetuneTrainer)
 _register_trainer(GradAscent)
 _register_trainer(GradDiff)
 _register_trainer(NPO)
+_register_trainer(PureNPO)
+_register_trainer(TokenNPO)
 _register_trainer(DPO)
 _register_trainer(SimNPO)
+_register_trainer(TokenSimNPO)
 _register_trainer(RMU)
 _register_trainer(UNDIAL)
 _register_trainer(CEU)

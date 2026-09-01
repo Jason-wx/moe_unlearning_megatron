@@ -1,7 +1,0 @@
-model:
-  name: qwen35
-  hydra_name: Qwen3.5-35B-A3B-Base
-  path: ${QWEN35_MODEL_PATH:-/mnt/shared-storage-gpfs2/gpfs2-shared-public/huggingface/zskj-hub/models-Qwen-Qwen3.5-35B-A3B-Base}
-  handler: AutoModelForMultimodalLM
-  num_experts: 256
-  trust_remote_code: true

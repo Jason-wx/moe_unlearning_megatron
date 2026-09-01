@@ -1,12 +1,18 @@
+"""Reference-free SimNPO variants."""
+
 import torch
 import torch.nn.functional as F
 
-from trainer.utils import compute_token_nll
 from trainer.unlearn.grad_diff import GradDiff
+from trainer.utils import compute_batch_nll, compute_token_nll
 
 
-class SimNPO(GradDiff):
+class _SimNPOBase(GradDiff):
+    token_level = False
+
     def __init__(self, delta=0.0, beta=1.0, *args, **kwargs):
+        if beta <= 0:
+            raise ValueError("beta must be positive")
         super().__init__(*args, **kwargs)
         self.delta = delta
         self.beta = beta
@@ -18,27 +24,29 @@ class SimNPO(GradDiff):
             }
         )
 
-    def compute_loss(
-        self, model, inputs, return_outputs=False, num_items_in_batch=None
-    ):
-        forget_inputs = inputs["forget"]
-
-        # Apply the bounded SimNPO objective independently to each valid
-        # next-token NLL.  A few already-forgotten tokens therefore cannot
-        # saturate the weight of every other token in a 1024-token document.
-        token_nll, forget_outputs = compute_token_nll(model, forget_inputs)
+    def _forget_objective(self, model, forget_inputs):
         valid_mask = forget_inputs["labels"][..., 1:].ne(-100)
-        valid_token_nll = token_nll[valid_mask]
-        if valid_token_nll.numel() == 0:
-            raise ValueError("SimNPO batch contains no valid prediction tokens")
+        if self.token_level:
+            token_nll, outputs = compute_token_nll(model, forget_inputs)
+            reduced_nll = token_nll[valid_mask]
+            if reduced_nll.numel() == 0:
+                raise ValueError("TokenSimNPO batch contains no valid prediction tokens")
+        else:
+            sequence_nll, outputs = compute_batch_nll(model, forget_inputs)
+            counts = valid_mask.sum(dim=-1)
+            nonempty = counts.gt(0)
+            if not torch.any(nonempty):
+                raise ValueError("SimNPO batch contains no valid prediction sequences")
+            reduced_nll = sequence_nll[nonempty] / counts[nonempty].to(sequence_nll.dtype)
 
-        sigmoid_argument = self.beta * (valid_token_nll - self.delta)
-        token_forget_loss = -2.0 / self.beta * F.logsigmoid(sigmoid_argument)
-        forget_loss = token_forget_loss.mean()
-        forget_mean_nll = valid_token_nll.mean()
-        # Magnitude of dL/d(NLL). It starts near one and approaches zero only
-        # for tokens that individually enter the saturated region.
-        forget_gradient_weight = (2.0 * torch.sigmoid(-sigmoid_argument)).mean()
+        sigmoid_argument = self.beta * (reduced_nll - self.delta)
+        forget_loss = (-2.0 / self.beta * F.logsigmoid(sigmoid_argument)).mean()
+        return forget_loss, outputs, reduced_nll, sigmoid_argument
+
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        forget_loss, forget_outputs, reduced_nll, sigmoid_argument = self._forget_objective(
+            model, inputs["forget"]
+        )
 
         retain_inputs = inputs["retain"]
         retain_inputs = {
@@ -53,12 +61,22 @@ class SimNPO(GradDiff):
         component_values = {
             "forget_loss": forget_loss,
             "retain_loss": retain_loss,
-            "forget_mean_nll": forget_mean_nll,
+            "forget_mean_nll": reduced_nll.mean(),
             "sigmoid_argument": sigmoid_argument.mean(),
-            "forget_gradient_weight": forget_gradient_weight,
+            "forget_gradient_weight": (2.0 * torch.sigmoid(-sigmoid_argument)).mean(),
         }
         for name, value in component_values.items():
             self._component_loss_sums[name] += value.detach().float().item()
         self._component_loss_count += 1
 
         return (loss, forget_outputs) if return_outputs else loss
+
+
+class SimNPO(_SimNPOBase):
+    """Original SimNPO over length-normalized sequence NLL."""
+
+
+class TokenSimNPO(_SimNPOBase):
+    """SimNPO with its logistic transform applied independently per token."""
+
+    token_level = True

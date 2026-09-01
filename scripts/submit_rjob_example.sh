@@ -5,7 +5,13 @@ set -euo pipefail
 # CONFIG; this file only declares cluster resources and the selected backend.
 BACKEND=${BACKEND:-megatron}
 WORKFLOW=${WORKFLOW:-single}
-CONFIG=${CONFIG:-configs/experiments/interns2_pure_npo.yaml}
+if [[ -z "${CONFIG:-}" ]]; then
+  if [[ "${BACKEND}" == "deepspeed" ]]; then
+    CONFIG=configs/training/deepspeed/interns2/pure_npo.yaml
+  else
+    CONFIG=configs/training/megatron/interns2/pure_npo.yaml
+  fi
+fi
 GPUS=${GPUS:-8}
 CPUS=${CPUS:-96}
 MEMORY_MB=${MEMORY_MB:-900000}
@@ -33,8 +39,8 @@ if [[ "${WORKFLOW}" != "single" && "${WORKFLOW}" != "train-eval-group" ]]; then
   echo "WORKFLOW must be single or train-eval-group" >&2
   exit 2
 fi
-if [[ "${WORKFLOW}" == "train-eval-group" && "${BACKEND}" != "megatron" ]]; then
-  echo "train-eval-group currently requires BACKEND=megatron" >&2
+if [[ "${WORKFLOW}" != "single" && "${BACKEND}" != "megatron" ]]; then
+  echo "group workflows currently require BACKEND=megatron" >&2
   exit 2
 fi
 if [[ "${USE_IMAGE}" != "true" && "${USE_IMAGE}" != "false" ]]; then
@@ -98,14 +104,14 @@ rjob submit \
 cd '${REPO_ROOT}'
 export OU_REPO_ROOT='${REPO_ROOT}'
 export OU_RUNTIME_ROOT='${OU_RUNTIME_ROOT:-}'
-export OU_MEGATRON_CHECKPOINT_ROOT='${OU_MEGATRON_CHECKPOINT_ROOT:-/mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron}'
+export OU_EVAL_ROOT='${OU_EVAL_ROOT:-${REPO_ROOT}/evaluations}'
+export OU_MEGATRON_CHECKPOINT_ROOT='${OU_MEGATRON_CHECKPOINT_ROOT:-/mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/v3}'
 export NUM_GPUS='${GPUS}'
 export NUM_PROCESSES='${EVAL_NUM_PROCESSES:-${GPUS}}'
 export CPU_THREADS_PER_PROCESS='${EVAL_CPU_THREADS_PER_PROCESS:-$((CPUS / GPUS))}'
 export PYTORCH_CUDA_ALLOC_CONF='${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}'
 export CONFIG='${CONFIG}'
 export SWEEP_NAME='${SWEEP_NAME:-}'
-export INTERMEDIATE_STEP='${INTERMEDIATE_STEP:-300}'
 export EVAL_TASKS='${EVAL_TASKS:-wmdp,mmlu}'
 RUN_TS=\$(date +%Y%m%d_%H%M%S)
 LOG_DIR='${RUN_ROOT}/rjob_logs/${JOB_NAME}'_\${RUN_TS}

@@ -11,6 +11,7 @@ import shutil
 import statistics
 import sys
 import time
+from collections import Counter
 from dataclasses import asdict
 from functools import partial
 from pathlib import Path
@@ -20,6 +21,12 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset, DistributedSampler
 
 from data.cached_pretraining import CachedDocumentChunkDataset
+from open_unlearning.trainable_parameters import (
+    classify_mcore_layer_parameter,
+    model_family,
+    normalize_trainable_param_mode,
+    trainable_categories,
+)
 
 from .batching import collate_role_batch
 from .config import (
@@ -158,7 +165,7 @@ def build_model(run: MegatronRunConfig):
         models,
         run.training.trainable_param_mode,
         model_type=config.hf_model_type,
-        train_layers=run.algorithm.train_layers,
+        train_layers=run.algorithm.train_layers if run.algorithm.name == "rmu" else (),
     )
     return models, config
 
@@ -196,7 +203,7 @@ def reference_window_ranges(
     """Return bounded reference/student windows for one optimizer step."""
     if num_microbatches <= 0 or logit_window_microbatches <= 0:
         raise ValueError("microbatch counts must be positive")
-    if algorithm in {"npo", "token_npo"}:
+    if algorithm in {"npo", "pure_npo", "token_npo"}:
         # NPO variants store only [batch, sequence] token NLL, so preserve a full
         # pipeline schedule and avoid extra pipeline bubbles.
         return [(0, num_microbatches)]
@@ -215,53 +222,71 @@ def _set_trainable_parameters(
     model_type: str,
     train_layers: tuple[int, ...] | list[int] = (),
 ) -> None:
-    if mode not in {"moe_experts", "rmu_experts"}:
-        raise ValueError(f"unsupported trainable_param_mode={mode!r}")
+    mode = normalize_trainable_param_mode(mode)
+    family = model_family(model_type)
+    enabled_categories = trainable_categories(mode)
+    selected_layers = frozenset(int(layer) for layer in train_layers)
     matched = 0
+    trainable_numel = 0
+    category_tensors: Counter[str] = Counter()
+    category_numel: Counter[str] = Counter()
+    matched_names: list[tuple[str, int, str]] = []
+
     for model in models:
-        if mode == "rmu_experts":
-            for parameter in model.parameters():
-                parameter.requires_grad_(False)
-            for layer in local_transformer_layers(model):
-                layer_number = getattr(layer, "layer_number", None)
-                if layer_number is None:
-                    raise RuntimeError("MCore Transformer layer has no global layer_number")
-                if layer_number - 1 not in train_layers:
+        for parameter in model.parameters():
+            parameter.requires_grad_(False)
+
+        for layer in local_transformer_layers(model):
+            layer_number = getattr(layer, "layer_number", None)
+            if layer_number is None:
+                raise RuntimeError("MCore Transformer layer has no global layer_number")
+            layer_index = layer_number - 1
+            if selected_layers and layer_index not in selected_layers:
+                continue
+            for name, parameter in layer.named_parameters():
+                category = classify_mcore_layer_parameter(name, family=family)
+                is_trainable = category in enabled_categories
+                parameter.requires_grad_(is_trainable)
+                if not is_trainable:
                     continue
-                for name, parameter in layer.named_parameters():
-                    is_routed_expert = ".experts." in f".{name}"
-                    is_shared_expert = (
-                        ".shared_experts." in f".{name}" or ".shared_expert." in f".{name}"
-                    )
-                    is_gemma_dense_mlp = "gemma4" in model_type and (
-                        ".mlp.linear_fc1." in f".{name}" or ".mlp.linear_fc2." in f".{name}"
-                    )
-                    is_expert = is_routed_expert or is_shared_expert or is_gemma_dense_mlp
-                    parameter.requires_grad_(is_expert)
-                    matched += int(is_expert)
-            continue
-        for name, parameter in model.named_parameters():
-            is_routed_expert = ".experts." in name or ".local_experts." in name
-            is_shared_expert = ".shared_experts." in name
-            # Gemma 4 uses ordinary dense MLP blocks between sparse MoE blocks;
-            # the existing HF backend intentionally trains those as well.
-            is_gemma_dense_mlp = "gemma4" in model_type and (
-                ".mlp.linear_fc1." in name or ".mlp.linear_fc2." in name
-            )
-            is_expert = is_routed_expert or is_shared_expert or is_gemma_dense_mlp
-            parameter.requires_grad_(is_expert)
-            matched += int(is_expert)
-    if mode == "rmu_experts" and dist.is_available() and dist.is_initialized():
-        global_matched = torch.tensor(
-            matched,
+                matched += 1
+                trainable_numel += parameter.numel()
+                category_tensors[category] += 1
+                category_numel[category] += parameter.numel()
+                if len(matched_names) < 80:
+                    matched_names.append((category, layer_index, name))
+
+    global_matched = matched
+    global_trainable_numel = trainable_numel
+    if dist.is_available() and dist.is_initialized():
+        global_stats = torch.tensor(
+            [matched, trainable_numel],
             device=torch.device("cuda", torch.cuda.current_device()),
             dtype=torch.long,
         )
-        dist.all_reduce(global_matched)
-        if not global_matched.item():
-            raise RuntimeError("RMU found no trainable expert parameters on any PP rank")
-    elif not matched:
-        raise RuntimeError("MCore model contains no local/shared expert parameters")
+        dist.all_reduce(global_stats)
+        global_matched, global_trainable_numel = global_stats.tolist()
+    if not global_matched:
+        layer_message = f", train_layers={sorted(selected_layers)}" if selected_layers else ""
+        raise RuntimeError(
+            f"MCore found no parameters for trainable_param_mode={mode}, "
+            f"model_family={family}{layer_message}"
+        )
+
+    rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
+    if rank == 0:
+        print(
+            f"trainable mode={mode} model_family={family}: "
+            f"{global_matched} distributed tensors, "
+            f"{global_trainable_numel} distributed parameters; "
+            f"local_category_tensors={dict(category_tensors)}; "
+            f"local_category_numel={dict(category_numel)}",
+            flush=True,
+        )
+        for category, layer_index, name in matched_names:
+            print(f"trainable {category}: layer={layer_index} {name}", flush=True)
+        if matched > len(matched_names):
+            print(f"... {matched - len(matched_names)} more local trainable tensors omitted", flush=True)
 
 
 def wrap_distributed_and_build_optimizer(run: MegatronRunConfig, models, model_config):
@@ -309,6 +334,48 @@ def wrap_distributed_and_build_optimizer(run: MegatronRunConfig, models, model_c
     return wrapped, optimizer
 
 
+def build_optimizer_scheduler(run: MegatronRunConfig, optimizer, max_steps: int):
+    """Build a step-based schedule whose cosine endpoint is the actual run endpoint."""
+
+    from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+
+    warmup_steps, decay_steps = optimizer_schedule_steps(run, max_steps)
+    return OptimizerParamScheduler(
+        optimizer=optimizer,
+        init_lr=run.optimizer.lr_warmup_init,
+        max_lr=run.optimizer.learning_rate,
+        min_lr=run.optimizer.min_learning_rate,
+        lr_warmup_steps=warmup_steps,
+        lr_decay_steps=decay_steps,
+        lr_decay_style=run.optimizer.lr_scheduler_type,
+        start_wd=run.optimizer.weight_decay,
+        end_wd=run.optimizer.weight_decay,
+        wd_incr_steps=max_steps,
+        wd_incr_style="constant",
+        use_checkpoint_opt_param_scheduler=False,
+        override_opt_param_scheduler=True,
+    )
+
+
+def optimizer_schedule_steps(run: MegatronRunConfig, max_steps: int) -> tuple[int, int]:
+    """Resolve ratio-based scheduler fields without importing Megatron or CUDA modules."""
+
+    if max_steps <= 0:
+        raise ValueError("max_steps must be positive")
+    return int(max_steps * run.optimizer.lr_warmup_ratio), max_steps
+
+
+def optimizer_learning_rate(optimizer) -> float:
+    """Return the canonical LR even when MCore adds auxiliary parameter groups."""
+
+    from megatron.core.optimizer_param_scheduler import get_canonical_lr_for_logging
+
+    value = get_canonical_lr_for_logging(optimizer.param_groups)
+    if value is None:
+        value = optimizer.param_groups[0]["lr"]
+    return float(value)
+
+
 def build_data_loader(run: MegatronRunConfig):
     from megatron.core import parallel_state
     from transformers import AutoTokenizer
@@ -327,13 +394,14 @@ def build_data_loader(run: MegatronRunConfig):
         raise ValueError("tokenizer has no pad_token_id or eos_token_id")
 
     forget = CachedDocumentChunkDataset(run.data.forget_cache)
-    retain = CachedDocumentChunkDataset(run.data.retain_cache) if run.data.retain_cache else None
+    retain_cache = run.data.retain_cache if algorithm_uses_retain(run.algorithm) else None
+    retain = CachedDocumentChunkDataset(retain_cache) if retain_cache else None
     dataset = PairedCacheDataset(forget, retain, run.training.seed)
     sampler = DistributedSampler(
         dataset,
         num_replicas=parallel_state.get_data_parallel_world_size(with_context_parallel=True),
         rank=parallel_state.get_data_parallel_rank(with_context_parallel=True),
-        shuffle=True,
+        shuffle=run.data.shuffle,
         seed=run.training.seed,
         drop_last=True,
     )
@@ -400,6 +468,7 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
     )
     if max_steps <= 0:
         raise RuntimeError("dataset is too small for one global batch")
+    optimizer_scheduler = build_optimizer_scheduler(run, optimizer, max_steps)
     unreachable_save_steps = [step for step in run.training.save_steps if step > max_steps]
     if unreachable_save_steps:
         raise ValueError(
@@ -432,7 +501,10 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
             f"micro_batch_size={run.training.micro_batch_size} "
             f"global_batch_size={run.training.global_batch_size} "
             f"micro_batches_per_step={num_microbatches} "
-            f"epochs={run.training.num_train_epochs}",
+            f"epochs={run.training.num_train_epochs} "
+            f"lr_schedule={run.optimizer.lr_scheduler_type} "
+            f"lr_warmup_steps={optimizer_scheduler.lr_warmup_steps} "
+            f"lr_decay_steps={optimizer_scheduler.lr_decay_steps}",
             flush=True,
         )
     if is_wandb_tracker:
@@ -473,7 +545,7 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
         if dist.get_rank() == 0:
             print(f"exported_model_weights={output_dir}", flush=True)
 
-    def finish_step(step, success, grad_norm, metrics, started_at) -> None:
+    def finish_step(step, success, grad_norm, metrics, started_at, learning_rate) -> None:
         torch.cuda.synchronize()
         elapsed = time.perf_counter() - started_at
         local = torch.tensor(
@@ -520,7 +592,7 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
                 "train/optimizer_step": step + 1,
                 "train/epoch": (step + 1) / steps_per_epoch,
                 "train/step_in_epoch": (step % steps_per_epoch) + 1,
-                "train/learning_rate": run.optimizer.learning_rate,
+                "train/learning_rate": learning_rate,
                 "train/global_batch_size": run.training.global_batch_size,
                 "train/micro_batch_size": run.training.micro_batch_size,
                 "train/micro_batches_per_step": num_microbatches,
@@ -571,6 +643,7 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
             progress_bar.set_postfix(
                 loss=f"{display_scalar(metrics.get('total_loss')):.4f}",
                 grad=f"{display_scalar(grad_norm):.3f}",
+                lr=f"{learning_rate:.2e}",
                 sec=f"{record['step_time_seconds']:.2f}",
                 mem=f"{max(record['allocated_gib_per_rank']):.1f}GiB",
                 refresh=False,
@@ -641,11 +714,16 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
                     forward_only=False,
                 )
                 rmu_state.assert_reference_queue_empty()
+                learning_rate = optimizer_learning_rate(optimizer)
                 success, grad_norm, _ = optimizer.step()
+                if success:
+                    optimizer_scheduler.step(1)
                 metrics = aggregate_step_metrics(rmu_state.step_metrics)
                 if not metrics:
                     metrics = aggregate_step_metrics(losses)
-                finish_step(step, success, grad_norm, metrics, step_started_at)
+                finish_step(
+                    step, success, grad_norm, metrics, step_started_at, learning_rate
+                )
                 continue
             reference_step_fn = partial(
                 reference_forward_step,
@@ -697,9 +775,12 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
                     losses.extend(window_losses)
             finally:
                 model_config.finalize_model_grads_func = finalize_model_grads
+        learning_rate = optimizer_learning_rate(optimizer)
         success, grad_norm, _ = optimizer.step()
+        if success:
+            optimizer_scheduler.step(1)
         metrics = aggregate_step_metrics(losses)
-        finish_step(step, success, grad_norm, metrics, step_started_at)
+        finish_step(step, success, grad_norm, metrics, step_started_at, learning_rate)
 
     if dist.get_rank() == 0:
         stable = benchmark_records[10:] or benchmark_records

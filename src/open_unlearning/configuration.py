@@ -11,20 +11,24 @@ from typing import Any
 
 import yaml
 
-from .runtime_paths import RuntimePaths, repository_root
+from .runtime_paths import RuntimePaths
+from .trainable_parameters import normalize_trainable_param_mode
 
-_COMPONENT_DIRS = {
-    "model": "models",
-    "dataset": "datasets",
-    "algorithm": "algorithms",
-    "profile": "profiles",
-}
 _BACKENDS = {"deepspeed", "megatron"}
-_RETAIN_ALGORITHMS = {"grad_diff", "simnpo", "wga", "satimp", "pdu", "rmu"}
+_SUPPORTED_ALGORITHMS = {
+    "deepspeed": {
+        "grad_ascent", "grad_diff", "npo", "pure_npo", "token_npo", "simnpo",
+        "token_simnpo", "wga", "satimp", "ceu", "pdu", "undial",
+    },
+    "megatron": {
+        "grad_ascent", "grad_diff", "npo", "pure_npo", "token_npo", "simnpo",
+        "token_simnpo", "wga", "satimp",
+        "ceu", "pdu", "undial", "rmu",
+    },
+}
+_RETAIN_ALGORITHMS = {"grad_diff", "simnpo", "token_simnpo", "pdu", "rmu"}
 _ALIASES = {
-    "pure_npo": "npo",
     "token_pure_npo": "token_npo",
-    "token_simnpo": "simnpo",
 }
 _ENV_PATTERN = re.compile(r"\$\{([A-Z][A-Z0-9_]*)(?::-([^}]*))?\}")
 
@@ -96,7 +100,7 @@ class ExperimentConfig:
         if self.algorithm_name in _RETAIN_ALGORITHMS:
             return True
         return (
-            self.algorithm_name == "undial"
+            self.algorithm_name in {"wga", "satimp", "undial"}
             and float(self.payload["algorithm"].get("alpha", 0.0)) != 0.0
         )
 
@@ -105,28 +109,108 @@ class ExperimentConfig:
         missing = [section for section in required_sections if section not in self.payload]
         if missing:
             raise ValueError(f"experiment is missing sections: {missing}")
+        required_fields = {
+            "model": (
+                "name", "path", "num_experts", "trust_remote_code",
+            ),
+            "data": (
+                "name", "forget_cache", "retain_cache", "sequence_length", "pad_token_id",
+                "shuffle",
+            ),
+            "algorithm": ("name",),
+            "training": (
+                "global_batch_size", "train_steps", "num_train_epochs", "learning_rate",
+                "weight_decay", "min_learning_rate", "adam_beta1", "adam_beta2", "adam_eps",
+                "gradient_clip", "seed", "bf16", "trainable_param_mode", "save_steps",
+                "save_every_epoch", "save_final_checkpoint", "wandb_mode", "wandb_project",
+                "wandb_dir",
+            ),
+        }
+        for section, fields in required_fields.items():
+            absent = [field for field in fields if field not in self.payload[section]]
+            if absent:
+                raise ValueError(f"{section} is missing explicit fields: {absent}")
+        configured_backends = set(self.payload["backends"])
+        unknown_backends = configured_backends - _BACKENDS
+        if unknown_backends:
+            raise ValueError(f"unknown configured backends: {sorted(unknown_backends)}")
+        if len(configured_backends) != 1:
+            raise ValueError("a training config must contain exactly one backend")
+        configured_backend = next(iter(configured_backends))
+        if configured_backend == "deepspeed":
+            if "output_dir" not in self.payload["training"]:
+                raise ValueError("training.output_dir must be explicit for DeepSpeed")
+            deepspeed = self.payload["backends"]["deepspeed"]
+            for section, fields in {
+                "model": ("tokenizer_path", "handler"),
+                "data": ("handler",),
+                "algorithm": ("deepspeed_trainer",),
+            }.items():
+                absent = [field for field in fields if field not in self.payload[section]]
+                if absent:
+                    raise ValueError(f"{section} is missing DeepSpeed fields: {absent}")
+            for field in (
+                "enabled", "world_size", "micro_batch_size", "optimizer",
+                "gradient_checkpointing", "do_train", "do_eval", "remove_unused_columns",
+                "save_only_model", "report_to", "ddp_find_unused_parameters",
+                "dataloader_drop_last", "per_device_eval_batch_size", "warmup_steps",
+                "lr_scheduler_type", "logging_steps", "launcher", "deepspeed_config",
+            ):
+                if field not in deepspeed:
+                    raise ValueError(f"backends.deepspeed.{field} must be explicit")
+            deepspeed_runtime = deepspeed["deepspeed_config"]
+            if float(deepspeed_runtime["gradient_clipping"]) != float(
+                self.payload["training"]["gradient_clip"]
+            ):
+                raise ValueError(
+                    "training.gradient_clip and "
+                    "backends.deepspeed.deepspeed_config.gradient_clipping must match"
+                )
+            if bool(deepspeed_runtime["bf16"]["enabled"]) != bool(
+                self.payload["training"]["bf16"]
+            ):
+                raise ValueError(
+                    "training.bf16 and "
+                    "backends.deepspeed.deepspeed_config.bf16.enabled must match"
+                )
+        else:
+            output_name = str(self.payload["training"].get("output_name", ""))
+            if (
+                not output_name
+                or output_name in {".", ".."}
+                or Path(output_name).name != output_name
+            ):
+                raise ValueError(
+                    "training.output_name must be a safe single directory name for Megatron"
+                )
+            for field in (
+                "lr_scheduler_type", "lr_warmup_ratio", "lr_warmup_init", "lr_decay_steps",
+            ):
+                if field not in self.payload["training"]:
+                    raise ValueError(f"training.{field} must be explicit for Megatron")
+            megatron = self.payload["backends"]["megatron"]
+            for field in ("enabled", "output_root", "micro_batch_size", "parallel", "reference"):
+                if field not in megatron:
+                    raise ValueError(f"backends.megatron.{field} must be explicit")
         for field in ("global_batch_size", "num_train_epochs"):
             if int(self.payload["training"].get(field, 0)) <= 0:
                 raise ValueError(f"training.{field} must be positive")
+        normalize_trainable_param_mode(self.payload["training"]["trainable_param_mode"])
         algorithm = self.algorithm_name
         retain_cache = self.payload["data"].get("retain_cache")
-        alpha = float(self.payload["algorithm"].get("alpha", 0.0))
-        if algorithm in _RETAIN_ALGORITHMS and not retain_cache:
+        if self.uses_retain and not retain_cache:
             raise ValueError(f"algorithm {algorithm} requires data.retain_cache")
-        if algorithm == "undial" and alpha != 0.0 and not retain_cache:
-            raise ValueError("UNDIAL with nonzero alpha requires data.retain_cache")
-        if backend is not None:
-            backend_cfg = self.backend(backend)
-            supported = set(backend_cfg.get("supported_algorithms", ()))
-            if supported and algorithm not in supported:
-                raise ValueError(f"{backend} does not support algorithm {algorithm}")
-            self._validate_batch(backend, backend_cfg)
+        selected_backend = backend or configured_backend
+        backend_cfg = self.backend(selected_backend)
+        if algorithm not in _SUPPORTED_ALGORITHMS[selected_backend]:
+            raise ValueError(f"{selected_backend} does not support algorithm {algorithm}")
+        self._validate_batch(selected_backend, backend_cfg)
         if check_paths:
             paths = {
                 "model.path": self.payload["model"].get("path"),
                 "data.forget_cache": self.payload["data"].get("forget_cache"),
             }
-            if retain_cache:
+            if self.uses_retain and retain_cache:
                 paths["data.retain_cache"] = retain_cache
             for label, value in paths.items():
                 if not value or "${" in str(value) or not Path(value).is_dir():
@@ -164,44 +248,16 @@ class ExperimentConfig:
 def load_experiment(
     path: str | Path,
     *,
-    config_root: str | Path | None = None,
     environment: Mapping[str, str] | None = None,
-    components: Mapping[str, str] | None = None,
     overrides: Mapping[str, Any] | None = None,
 ) -> ExperimentConfig:
     path = Path(path).resolve()
-    root = Path(config_root or repository_root() / "configs").resolve()
     payload = _read_yaml(path)
-    defaults = payload.pop("defaults", {})
-    if not isinstance(defaults, Mapping):
-        raise TypeError("experiment.defaults must be a mapping")
-    component_names = dict(defaults)
-    for kind, name in (components or {}).items():
-        if kind not in _COMPONENT_DIRS:
-            raise ValueError(f"unknown component kind {kind!r}")
-        component_names[kind] = name
-
-    merged: dict[str, Any] = {}
-    for kind, directory in _COMPONENT_DIRS.items():
-        name = component_names.get(kind)
-        if name:
-            merged = _deep_merge(merged, _read_yaml(root / directory / f"{name}.yaml"))
-    backend_defaults = defaults.get("backends", {})
-    if not isinstance(backend_defaults, Mapping):
-        raise TypeError("experiment.defaults.backends must be a mapping")
-    for backend, name in backend_defaults.items():
-        if backend not in _BACKENDS:
-            raise ValueError(f"unknown backend component {backend!r}")
-        component = _read_yaml(root / "backends" / backend / f"{name}.yaml")
-        merged = _deep_merge(merged, component)
-    merged = _deep_merge(merged, payload)
-    if components and not (overrides or {}).get("name"):
-        generated_name = "-".join(
-            str(merged[section]["name"]).replace("_", "-")
-            for section in ("model", "algorithm", "data")
+    if "defaults" in payload:
+        raise ValueError(
+            "training configs must be self-contained; remove the 'defaults' section"
         )
-        merged["name"] = generated_name
-        merged.setdefault("training", {})["output_dir"] = "${OU_CHECKPOINT_ROOT}/" + generated_name
+    merged = payload
     if overrides:
         merged = _deep_merge(merged, overrides)
 
