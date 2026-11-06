@@ -9,7 +9,7 @@ WMDP-Cyber）的最终训练配置已整理到
 | --- | --- |
 | [interns2/](interns2/README.md)、[qwen35/](qwen35/README.md)、[gemma4/](gemma4/README.md) | WMDP-Bio 实验线 |
 | [main-cyber/](main-cyber/online_eval_summary_20261001.md) | WMDP-Cyber 实验线（[interns2](main-cyber/interns2/README.md)、[qwen35](main-cyber/qwen35/README.md)、[gemma4](main-cyber/gemma4/README.md)） |
-| [Appendix/](Appendix/) | 基线细节附录与技术报告草稿 |
+| [Appendix/](Appendix/) | 基线细节附录 |
 | `temp_config/` | 临时配置 |
 
 以下为各 bio 实验线的建线记录，内容反映提交当时的状态。
