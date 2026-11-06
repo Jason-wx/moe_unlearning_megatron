@@ -1,10 +1,49 @@
 # MoE Unlearning
 
-本仓库在 [OpenUnlearning](https://github.com/locuslab/open-unlearning) 的基础上，为三个
-MoE 大模型实现了基于 Megatron（MCore）的大规模遗忘训练：在 WMDP-Bio / WMDP-Cyber
-语料上遗忘危险知识，并用 WMDP 与 MMLU 评测遗忘效果和通用能力。
+本仓库在 [OpenUnlearning](https://github.com/locuslab/open-unlearning) 的基础上重新适配，
+用于大规模 MoE 模型的机器遗忘，**只覆盖 CPT 阶段**：在 WMDP-Bio / WMDP-Cyber 的纯文本
+forget 语料上做继续预训练式的遗忘，以 FineWeb-Edu 作为 retain 语料，不涉及 SFT 或对话数据。
+
+目前支持 Intern-S2、Qwen3.5-35B-A3B 和 Gemma4-26B-A4B 三个模型，实现了 GradAscent、
+GradDiff、NPO、PureNPO、TokenNPO、SimNPO、TokenSimNPO、WGA、SatImp、CEU、PDU、UNDIAL、
+RMU 共 13 个算法。训练可使用 Megatron（MCore，正式实验均在此完成）或 DeepSpeed 后端，并支持
+在训练过程中在线评测 WMDP 与 MMLU。可训练参数可通过 `trainable_param_mode` 选择 `attention`、
+`expert`、`router` 或三者之和 `full`。
 
 > 构造数据、启动训练和评测的完整步骤见 **[Runbook](RUNBOOK.md)**。
+
+## 框架简介
+
+本仓库基于 [OpenUnlearning](https://github.com/locuslab/open-unlearning)。上游框架主要面向
+HF/DeepSpeed 上的稠密模型；本仓库把同一套遗忘算法扩展到数百亿参数的 MoE 模型上：
+
+- **Megatron（MCore）训练后端**：支持张量 / 流水线 / 专家 / 上下文并行和分布式优化器，
+  需要参考模型的算法（NPO 系列、UNDIAL、RMU）会在训练时常驻一份冻结的参考模型。训练结束
+  导出 HF 格式的 checkpoint。
+- **三个 MoE 模型**：Intern-S2、Qwen3.5-35B-A3B、Gemma4-26B-A4B。Intern-S2 与 Qwen3.5
+  共用 Qwen3.5 MoE 适配器，Gemma4 使用独立适配器。
+- **按模块选择可训练参数**：`attention`、`expert`、`router` 或三者之和 `full`，embedding、
+  LM head 等 block 外参数始终冻结。
+- **13 个遗忘算法**：GradAscent、GradDiff、NPO 系列、SimNPO 系列、WGA、SatImp、CEU、PDU、
+  UNDIAL、RMU，在 Megatron 上统一实现。
+- **训练中在线评测**：在指定训练步直接用显存中的参数评测 WMDP 与 MMLU，一次训练即可得到
+  完整的遗忘曲线（见下文）。
+- **离线 token cache**：语料预先 tokenize 成 cache，提供 XTuner soft-pack 与 document chunk
+  两种格式，训练时直接读取，保证不同算法看到完全相同的数据顺序。
+- **自包含配置**：每次实验是一份完整的 YAML（模型、数据、算法、训练、后端），同一个 CLI
+  负责校验和启动；DeepSpeed 后端仍然保留，可用于 Intern-S2。
+
+使用流程分三步：
+
+~~~text
+1. 构造 data cache     configs/data_processing/  ->  scripts/build_*_cache_example.sh
+2. 训练（含在线评测）   configs/training/megatron/final-training-configs/  ->  scripts/train_megatron.sh
+                        或 scripts/submit_rjob_example.sh 提交到集群
+3. 离线评测（可选）     scripts/eval.sh
+~~~
+
+本仓库的最终实验覆盖 3 个模型 × 2 个数据集（WMDP-Bio、WMDP-Cyber）× 9 个算法，全部在
+Megatron 后端上完成。
 
 ## 支持范围
 
