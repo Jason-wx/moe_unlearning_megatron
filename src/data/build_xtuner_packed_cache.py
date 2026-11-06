@@ -321,8 +321,15 @@ def build_from_config(config: dict[str, Any], *, overwrite=False, max_documents=
         "text_key": str(text_key) if text_key is not None else None,
         "add_eos_token": bool(packing_cfg.get("add_eos_token", True)),
         "add_bos_token": bool(packing_cfg.get("add_bos_token", False)),
+        "bos_per_pack": bool(packing_cfg.get("bos_per_pack", False)),
         "tokenize_batch_size": tokenize_batch_size,
     }
+    if settings["bos_per_pack"] and settings["add_bos_token"]:
+        raise ValueError(
+            "packing.bos_per_pack and packing.add_bos_token are mutually exclusive: "
+            "per-pack BOS plus document-level BOS would emit <bos><bos> at "
+            "document-aligned pack starts. Pick one."
+        )
     results = []
     try:
         with tqdm(
@@ -386,6 +393,9 @@ def build_from_config(config: dict[str, Any], *, overwrite=False, max_documents=
             tokenizer.pad_token = tokenizer.eos_token or tokenizer.unk_token
         if tokenizer.pad_token_id is None:
             raise ValueError("tokenizer has no pad_token_id, eos_token_id, or unk_token_id")
+        bos_per_pack = settings["bos_per_pack"]
+        if bos_per_pack and tokenizer.bos_token_id is None:
+            raise ValueError("packing.bos_per_pack=true but tokenizer has no bos_token_id")
 
         document_tokens = np.memmap(document_token_path, dtype=np.uint32, mode="r")
         offsets = np.empty(len(document_lengths) + 1, dtype=np.uint64)
@@ -417,6 +427,7 @@ def build_from_config(config: dict[str, Any], *, overwrite=False, max_documents=
             pack_extra_buffer_size=int(packing_cfg.get("pack_extra_buffer_size", 100)),
             sample_ratio=float(dataset_cfg.get("sample_ratio", 1.0)),
             filter_empty=bool(dataset_cfg.get("filter_empty", True)),
+            bos_token_id=int(tokenizer.bos_token_id) if bos_per_pack else None,
             metadata={
                 "builder": "data.build_xtuner_packed_cache",
                 "model_path": model_path,
@@ -429,6 +440,7 @@ def build_from_config(config: dict[str, Any], *, overwrite=False, max_documents=
                 "max_documents": document_limit,
                 "add_eos_token": settings["add_eos_token"],
                 "add_bos_token": settings["add_bos_token"],
+                "bos_per_pack": settings["bos_per_pack"],
                 "pack_to_max_length": True,
                 "source_order_is_training_order": True,
                 "runtime_shuffle_required": False,

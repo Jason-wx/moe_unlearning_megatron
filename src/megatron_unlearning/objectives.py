@@ -7,9 +7,18 @@ without gathering the full vocabulary logits on every rank.
 
 from __future__ import annotations
 
+import os
+
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
+
+# Debug switch for the gemma4 x PDU rmsnorm_bwd illegal-memory-access:
+# when OU_PDU_CONTIG_LOSS=1 the full-vocab PDU losses are computed on fully
+# contiguous fp32 tensors (plain 2D cross entropy, contiguous dispersion
+# input) instead of the strided layouts produced by transpose().float().
+# Off by default — behavior is unchanged for every other run.
+_CONTIG_LOSS = os.environ.get("OU_PDU_CONTIG_LOSS", "") == "1"
 
 
 def _tp_info() -> tuple[int, int, object | None]:
@@ -200,9 +209,7 @@ def satimp_objective(
     probability_quantiles = torch.quantile(
         valid_probability, valid_probability.new_tensor([0.1, 0.5, 0.9])
     )
-    weight_quantiles = torch.quantile(
-        valid_weight, valid_weight.new_tensor([0.1, 0.5, 0.9])
-    )
+    weight_quantiles = torch.quantile(valid_weight, valid_weight.new_tensor([0.1, 0.5, 0.9]))
     weight_square_sum = valid_weight.square().sum()
     effective_token_fraction = valid_weight.sum().square() / (
         valid_weight.numel() * weight_square_sum.clamp_min(torch.finfo(valid_weight.dtype).tiny)
@@ -254,22 +261,36 @@ def ceu_objective(
     shifted = logits - global_max.unsqueeze(-1)
     local_exp = shifted.exp()
     global_exp_sum = _tp_sum(local_exp.sum(dim=-1), tp_size)
-    probabilities = local_exp / global_exp_sum.unsqueeze(-1)
-    log_probabilities = shifted - global_exp_sum.log().unsqueeze(-1)
 
     owns_label = labels.ge(vocab_start) & labels.lt(vocab_end)
     local_label = (labels - vocab_start).clamp(0, local_vocab_size - 1)
-    local_correct_probability = probabilities.gather(1, local_label.unsqueeze(1)).squeeze(1)
-    local_correct_probability = local_correct_probability * owns_label
-    correct_probability = _tp_sum(local_correct_probability, tp_size).detach()
 
-    target = probabilities.detach().clone()
+    # Leave-gold-out target, built in log space: softmax over the logits with
+    # the gold entry masked out is exactly p_v / (1 - p_gold), and stays exact
+    # no matter how confident the gold logit is. The previous direct
+    # renormalization divided by (1 - p_gold).clamp_min(1e-12): once p_gold
+    # rounded to 1.0 in fp32 (gold leading by >~17 nats) the clamp inflated
+    # the target up to ~6e3x, and once the non-gold softmax underflowed the
+    # target vanished and the gradient was zeroed. Shifting by the masked
+    # (non-gold) global max instead of the overall max keeps the largest
+    # non-gold entry at exp(0)=1, so the target never underflows either.
+    masked_shifted = shifted.detach().clone()
     if torch.any(owns_label):
-        rows = torch.arange(target.shape[0], device=target.device)[owns_label]
-        target[rows, local_label[owns_label]] = 0.0
-    target = target / (1.0 - correct_probability).clamp_min(1e-12).unsqueeze(-1)
-    local_loss = -(target * log_probabilities).sum(dim=-1)
-    loss = _tp_sum(local_loss, tp_size).mean()
+        rows = torch.arange(masked_shifted.shape[0], device=masked_shifted.device)[owns_label]
+        masked_shifted[rows, local_label[owns_label]] = torch.finfo(masked_shifted.dtype).min
+    masked_max = masked_shifted.max(dim=-1).values
+    if tp_size > 1:
+        dist.all_reduce(masked_max, op=dist.ReduceOp.MAX, group=tp_group)
+    masked_shifted = (masked_shifted - masked_max.unsqueeze(-1)).exp()
+    masked_sum = _tp_sum(masked_shifted.sum(dim=-1), tp_size)
+    target = masked_shifted / masked_sum.unsqueeze(-1)
+    # -sum_v target * (shifted - log Z), split so that log Z is weighted by the
+    # GLOBAL target mass. Summing local -(target * log_probabilities) instead
+    # would backpropagate log Z on each TP rank with only that shard's target
+    # mass (the _tp_sum backward is identity), giving a wrong gradient for TP>1.
+    target_mass = _tp_sum(target.sum(dim=-1), tp_size)
+    cross = _tp_sum((target * shifted).sum(dim=-1), tp_size)
+    loss = (global_exp_sum.log() * target_mass - cross).mean()
     return loss, {"ceu_valid_tokens": valid.sum().detach()}
 
 
@@ -281,6 +302,8 @@ def pdu_forget_objective(
     if forget_logits.shape[:-1] != forget_mask.shape:
         raise ValueError("logits and mask have incompatible shapes")
     logits = forget_logits.float()
+    if _CONTIG_LOSS:
+        logits = logits.contiguous()
     tp_size, _, tp_group = _tp_info()
     local_max = logits.max(dim=-1).values
     global_max = _tp_max_with_local_gradient(local_max, tp_size, tp_group)
@@ -297,6 +320,19 @@ def vocab_parallel_token_nll(
     """Unreduced NLL for full or tensor-parallel vocabulary logits."""
     tp_size, _, _ = _tp_info()
     if tp_size == 1:
+        if _CONTIG_LOSS:
+            # Debug variant: plain 2D CE over a fully contiguous fp32 copy
+            # (the [B, V, S] strided layout from transpose().float() is the
+            # prime suspect for the gemma4 x PDU rmsnorm_bwd illegal access).
+            vocab = local_logits.shape[-1]
+            flat = local_logits.float().reshape(-1, vocab)
+            losses = F.cross_entropy(
+                flat,
+                labels.reshape(-1),
+                ignore_index=-100,
+                reduction="none",
+            )
+            return losses.reshape(labels.shape)
         return F.cross_entropy(
             local_logits.transpose(1, 2).float(),
             labels,
@@ -420,6 +456,7 @@ def undial_objective(
     token_mask: torch.Tensor,
     *,
     beta: float = 10.0,
+    chunk_rows: int | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """UNDIAL soft-target CE over a full or tensor-parallel vocabulary.
 
@@ -441,32 +478,108 @@ def undial_objective(
     if not torch.any(valid):
         raise ValueError("UNDIAL batch contains no valid tokens")
 
-    teacher = teacher_logits.detach().float().clone()
     owns_label = valid & labels.ge(vocab_start) & labels.lt(vocab_end)
     local_label = (labels - vocab_start).clamp(0, local_vocab_size - 1)
-    if torch.any(owns_label):
-        rows, columns = owns_label.nonzero(as_tuple=True)
-        teacher[rows, columns, local_label[rows, columns]] -= beta
-
-    teacher_global_max = teacher.max(dim=-1).values
-    if tp_size > 1:
-        dist.all_reduce(teacher_global_max, op=dist.ReduceOp.MAX, group=tp_group)
-    teacher_shifted = teacher - teacher_global_max.unsqueeze(-1)
-    teacher_denominator = _tp_sum(teacher_shifted.exp().sum(dim=-1), tp_size)
-    soft_targets = (teacher_shifted - teacher_denominator.log().unsqueeze(-1)).exp().detach()
-
-    student = student_logits.float()
-    student_global_max = student.detach().max(dim=-1).values
-    if tp_size > 1:
-        dist.all_reduce(student_global_max, op=dist.ReduceOp.MAX, group=tp_group)
-    student_shifted = student - student_global_max.unsqueeze(-1)
-    student_denominator = _tp_sum(student_shifted.exp().sum(dim=-1), tp_size)
-    student_log_probabilities = student_shifted - student_denominator.log().unsqueeze(-1)
-
-    local_cross_entropy = -(soft_targets * student_log_probabilities).sum(dim=-1)
-    cross_entropy = _tp_sum(local_cross_entropy, tp_size)
+    if chunk_rows is None:
+        chunk_rows = max(1, _UNDIAL_CHUNK_ELEMENTS // local_vocab_size)
+    cross_entropy = _UndialSoftTargetCrossEntropy.apply(
+        student_logits.reshape(-1, local_vocab_size),
+        teacher_logits.detach().reshape(-1, local_vocab_size),
+        local_label.reshape(-1),
+        owns_label.reshape(-1),
+        float(beta),
+        tp_size,
+        tp_group,
+        int(chunk_rows),
+    ).reshape(labels.shape)
     loss = masked_mean(cross_entropy, valid)
     return loss, {"undial_valid_tokens": valid.sum().detach()}
+
+
+# fp32 elements per UNDIAL row chunk (2**27 -> 512 MiB per temporary).
+_UNDIAL_CHUNK_ELEMENTS = 1 << 27
+
+
+def _tp_all_reduce_(value: torch.Tensor, op, tp_size: int, tp_group) -> torch.Tensor:
+    if tp_size > 1:
+        dist.all_reduce(value, op=op, group=tp_group)
+    return value
+
+
+def _undial_teacher_chunk(teacher, local_label, owns_label, beta, start, end):
+    chunk = teacher[start:end].to(torch.float32, copy=True)
+    owns = owns_label[start:end]
+    if torch.any(owns):
+        rows = owns.nonzero(as_tuple=True)[0]
+        chunk[rows, local_label[start:end][rows]] -= beta
+    return chunk
+
+
+class _UndialSoftTargetCrossEntropy(torch.autograd.Function):
+    """Row-wise ``-sum_v p_v log softmax(s)_v`` over a full or TP vocab shard.
+
+    ``p`` is the (label-penalized) teacher softmax. The global target mass is
+    exactly 1, so the loss is ``logsumexp(s) - sum_v p_v s_v`` and the local
+    gradient is ``softmax(s) - p`` on every TP shard. Rows are processed in
+    chunks and only per-row global log-normalizers are saved, so no full-vocab
+    fp32 tensor is ever materialized (the naive form keeps ~6 of them alive).
+    """
+
+    @staticmethod
+    def forward(
+        ctx, student, teacher, local_label, owns_label, beta, tp_size, tp_group, chunk_rows
+    ):
+        rows = student.shape[0]
+        student_lse = torch.empty(rows, device=student.device, dtype=torch.float32)
+        teacher_lse = torch.empty_like(student_lse)
+        loss = torch.empty_like(student_lse)
+        for start in range(0, rows, chunk_rows):
+            end = min(start + chunk_rows, rows)
+            chunk = _undial_teacher_chunk(teacher, local_label, owns_label, beta, start, end)
+            teacher_max = _tp_all_reduce_(
+                chunk.max(dim=-1).values, dist.ReduceOp.MAX, tp_size, tp_group
+            )
+            chunk.sub_(teacher_max.unsqueeze(-1))
+            teacher_sum = _tp_all_reduce_(
+                chunk.exp().sum(dim=-1), dist.ReduceOp.SUM, tp_size, tp_group
+            )
+            teacher_lse[start:end] = teacher_max + teacher_sum.log()
+            soft_targets = chunk.sub_(teacher_sum.log().unsqueeze(-1)).exp_()
+
+            chunk = student[start:end].to(torch.float32, copy=True)
+            student_max = _tp_all_reduce_(
+                chunk.max(dim=-1).values, dist.ReduceOp.MAX, tp_size, tp_group
+            )
+            chunk.sub_(student_max.unsqueeze(-1))
+            student_sum = _tp_all_reduce_(
+                chunk.exp().sum(dim=-1), dist.ReduceOp.SUM, tp_size, tp_group
+            )
+            student_lse[start:end] = student_max + student_sum.log()
+            cross = _tp_all_reduce_(
+                (soft_targets * chunk).sum(dim=-1), dist.ReduceOp.SUM, tp_size, tp_group
+            )
+            loss[start:end] = student_sum.log() - cross
+            del chunk, soft_targets
+        ctx.save_for_backward(student, teacher, local_label, owns_label, student_lse, teacher_lse)
+        ctx.beta = beta
+        ctx.chunk_rows = chunk_rows
+        return loss
+
+    @staticmethod
+    def backward(ctx, grad_loss):
+        student, teacher, local_label, owns_label, student_lse, teacher_lse = ctx.saved_tensors
+        grad_student = torch.empty_like(student)
+        grad_loss = grad_loss.float()
+        rows = student.shape[0]
+        for start in range(0, rows, ctx.chunk_rows):
+            end = min(start + ctx.chunk_rows, rows)
+            chunk = _undial_teacher_chunk(teacher, local_label, owns_label, ctx.beta, start, end)
+            soft_targets = chunk.sub_(teacher_lse[start:end].unsqueeze(-1)).exp_()
+            chunk = student[start:end].to(torch.float32, copy=True)
+            chunk.sub_(student_lse[start:end].unsqueeze(-1)).exp_().sub_(soft_targets)
+            grad_student[start:end] = chunk.mul_(grad_loss[start:end].unsqueeze(-1))
+            del chunk, soft_targets
+        return grad_student, None, None, None, None, None, None, None
 
 
 def rmu_mse_statistics(

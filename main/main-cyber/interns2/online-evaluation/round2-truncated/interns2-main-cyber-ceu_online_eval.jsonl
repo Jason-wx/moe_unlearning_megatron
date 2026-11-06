@@ -1,0 +1,4 @@
+{"run": "interns2-main-cyber-ceu", "step": 23, "unix_time": 1790766460.6876345, "wmdp_cyber": 0.5581278309008556, "mmlu": 0.8651629072681705}
+{"run": "interns2-main-cyber-ceu", "step": 46, "unix_time": 1790766935.0441089, "wmdp_cyber": 0.46451937594363363, "mmlu": 0.8175438596491228}
+{"run": "interns2-main-cyber-ceu", "step": 69, "unix_time": 1790767404.125469, "wmdp_cyber": 0.44489179667840967, "mmlu": 0.7989974937343358}
+{"run": "interns2-main-cyber-ceu", "step": 92, "unix_time": 1790767874.328916, "wmdp_cyber": 0.43583291394061396, "mmlu": 0.7919799498746867}

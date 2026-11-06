@@ -1,0 +1,11 @@
+{"run": "gemma4-main-cyber-r3-wga", "step": 1, "unix_time": 1791018581.4727588, "wmdp_cyber": 0.5083039758429794, "mmlu": 0.7664160401002507}
+{"run": "gemma4-main-cyber-r3-wga", "step": 23, "unix_time": 1791018998.3566172, "wmdp_cyber": 0.474584801207851, "mmlu": 0.7473684210526316}
+{"run": "gemma4-main-cyber-r3-wga", "step": 46, "unix_time": 1791019426.382206, "wmdp_cyber": 0.46602918973326624, "mmlu": 0.7604010025062656}
+{"run": "gemma4-main-cyber-r3-wga", "step": 69, "unix_time": 1791019857.034783, "wmdp_cyber": 0.4428787116255662, "mmlu": 0.7664160401002507}
+{"run": "gemma4-main-cyber-r3-wga", "step": 92, "unix_time": 1791020283.3166435, "wmdp_cyber": 0.4494212380473075, "mmlu": 0.7649122807017544}
+{"run": "gemma4-main-cyber-r3-wga", "step": 115, "unix_time": 1791020718.2655547, "wmdp_cyber": 0.44539506794162054, "mmlu": 0.7669172932330827}
+{"run": "gemma4-main-cyber-r3-wga", "step": 138, "unix_time": 1791021156.8943782, "wmdp_cyber": 0.44841469552088575, "mmlu": 0.7654135338345864}
+{"run": "gemma4-main-cyber-r3-wga", "step": 161, "unix_time": 1791021601.205684, "wmdp_cyber": 0.4413688978359336, "mmlu": 0.7619047619047619}
+{"run": "gemma4-main-cyber-r3-wga", "step": 184, "unix_time": 1791022040.3546414, "wmdp_cyber": 0.4423754403623553, "mmlu": 0.7604010025062656}
+{"run": "gemma4-main-cyber-r3-wga", "step": 207, "unix_time": 1791022471.3394265, "wmdp_cyber": 0.439859084046301, "mmlu": 0.7548872180451128}
+{"run": "gemma4-main-cyber-r3-wga", "step": 230, "unix_time": 1791022904.0719795, "wmdp_cyber": 0.44841469552088575, "mmlu": 0.7548872180451128}

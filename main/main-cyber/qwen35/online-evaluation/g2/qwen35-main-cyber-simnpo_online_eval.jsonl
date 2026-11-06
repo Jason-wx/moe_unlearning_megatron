@@ -1,0 +1,10 @@
+{"run": "qwen35-main-cyber-simnpo", "step": 23, "unix_time": 1790918852.443789, "wmdp_cyber": 0.4559637644690488, "mmlu": 0.8240601503759398}
+{"run": "qwen35-main-cyber-simnpo", "step": 46, "unix_time": 1790919560.9255702, "wmdp_cyber": 0.42274786109713136, "mmlu": 0.8230576441102757}
+{"run": "qwen35-main-cyber-simnpo", "step": 69, "unix_time": 1790919984.9029105, "wmdp_cyber": 0.420231504781077, "mmlu": 0.8155388471177945}
+{"run": "qwen35-main-cyber-simnpo", "step": 92, "unix_time": 1790920411.8620353, "wmdp_cyber": 0.42123804730749875, "mmlu": 0.8080200501253133}
+{"run": "qwen35-main-cyber-simnpo", "step": 115, "unix_time": 1790920836.618385, "wmdp_cyber": 0.41821841972823354, "mmlu": 0.8075187969924812}
+{"run": "qwen35-main-cyber-simnpo", "step": 138, "unix_time": 1790921261.550165, "wmdp_cyber": 0.42325113236034223, "mmlu": 0.8055137844611528}
+{"run": "qwen35-main-cyber-simnpo", "step": 161, "unix_time": 1790921688.489102, "wmdp_cyber": 0.420231504781077, "mmlu": 0.8040100250626566}
+{"run": "qwen35-main-cyber-simnpo", "step": 184, "unix_time": 1790922115.530914, "wmdp_cyber": 0.4217413185707096, "mmlu": 0.8035087719298246}
+{"run": "qwen35-main-cyber-simnpo", "step": 207, "unix_time": 1790922539.8873045, "wmdp_cyber": 0.4187216909914444, "mmlu": 0.8055137844611528}
+{"run": "qwen35-main-cyber-simnpo", "step": 230, "unix_time": 1790922964.8737626, "wmdp_cyber": 0.42123804730749875, "mmlu": 0.8045112781954887}

@@ -16,17 +16,22 @@ REPO = Path(__file__).resolve().parents[1]
 DEEPSPEED_EXPERIMENT = (
     REPO / "configs" / "training" / "deepspeed" / "interns2" / "pure_npo.yaml"
 )
-MEGATRON_EXPERIMENT = (
-    REPO / "configs" / "training" / "megatron" / "interns2" / "pure_npo.yaml"
-)
-WGA_EXPERIMENT = (
-    REPO / "configs" / "training" / "megatron" / "interns2" / "wga.yaml"
-)
-SATIMP_EXPERIMENT = (
-    REPO / "configs" / "training" / "megatron" / "interns2" / "satimp.yaml"
-)
-RMU_EXPERIMENT = REPO / "configs" / "training" / "megatron" / "interns2" / "rmu.yaml"
+# Early Intern-S2 V3 Megatron configs kept as mapping-test inputs (tests/fixtures/README.md).
+MEGATRON_FIXTURES = REPO / "tests" / "fixtures" / "megatron" / "interns2"
+MEGATRON_EXPERIMENT = MEGATRON_FIXTURES / "pure_npo.yaml"
+WGA_EXPERIMENT = MEGATRON_FIXTURES / "wga.yaml"
+SATIMP_EXPERIMENT = MEGATRON_FIXTURES / "satimp.yaml"
+SIMNPO_EXPERIMENT = MEGATRON_FIXTURES / "simnpo.yaml"
+RMU_EXPERIMENT = MEGATRON_FIXTURES / "rmu.yaml"
 HYDRA_BRIDGE = REPO / "configs" / "internal" / "deepspeed"
+FINAL_CONFIGS = REPO / "configs" / "training" / "megatron" / "final-training-configs"
+
+
+def experiment_configs() -> list[Path]:
+    """Every runnable training YAML in the repository (Trace.yaml is not this framework)."""
+    final = [path for path in FINAL_CONFIGS.glob("*/*/*.yaml") if path.name != "Trace.yaml"]
+    deepspeed = (REPO / "configs" / "training" / "deepspeed").rglob("*.yaml")
+    return sorted([*final, *deepspeed, *MEGATRON_FIXTURES.glob("*.yaml")])
 
 
 class RuntimePathTests(unittest.TestCase):
@@ -73,8 +78,8 @@ class SharedConfigurationTests(unittest.TestCase):
             self.megatron_config.validate(backend="deepspeed")
 
     def test_all_training_configs_validate_their_single_backend(self) -> None:
-        for path in sorted((REPO / "configs" / "training").rglob("*.yaml")):
-            with self.subTest(experiment=path.name):
+        for path in experiment_configs():
+            with self.subTest(experiment=str(path.relative_to(REPO))):
                 config = load_experiment(path, environment=self.environment)
                 self.assertEqual(len(config.payload["backends"]), 1)
                 config.validate(backend=next(iter(config.payload["backends"])))
@@ -146,6 +151,7 @@ class SharedConfigurationTests(unittest.TestCase):
         self.assertEqual(mapping["training"]["global_batch_size"], 4)
         self.assertEqual(mapping["training"]["train_steps"], -1)
         self.assertEqual(mapping["training"]["num_train_epochs"], 1)
+        self.assertEqual(mapping["training"]["save_interval_steps"], 0)
         self.assertEqual(mapping["data"]["sequence_length"], 4096)
         self.assertFalse(mapping["data"]["shuffle"])
         self.assertEqual(mapping["training"]["trainable_param_mode"], "full")
@@ -163,13 +169,29 @@ class SharedConfigurationTests(unittest.TestCase):
 
     def test_five_npo_family_config_names_remain_distinct(self) -> None:
         expected = ("npo", "pure_npo", "token_npo", "simnpo", "token_simnpo")
-        for backend in ("deepspeed", "megatron"):
-            root = REPO / "configs" / "training" / backend / "interns2"
+        roots = (REPO / "configs" / "training" / "deepspeed" / "interns2", MEGATRON_FIXTURES)
+        for root in roots:
             actual = tuple(
                 load_experiment(root / f"{name}.yaml", environment=self.environment).algorithm_name
                 for name in expected
             )
             self.assertEqual(actual, expected)
+
+    def test_simnpo_alpha_zero_is_forget_only(self) -> None:
+        config = load_experiment(
+            SIMNPO_EXPERIMENT,
+            environment=self.environment,
+            overrides={"algorithm": {"alpha": 0.0}, "data": {"retain_cache": None}},
+        )
+        config.validate(backend="megatron")
+        self.assertFalse(config.uses_retain)
+
+        mapping = to_megatron_mapping(config)
+        self.assertIsNone(mapping["data"]["retain_cache"])
+        self.assertEqual(mapping["algorithm"]["alpha"], 0.0)
+
+        config = load_experiment(SIMNPO_EXPERIMENT, environment=self.environment)
+        self.assertTrue(config.uses_retain)
 
     def test_wga_is_forget_only_and_uses_selected_optimizer_settings(self) -> None:
         config = load_experiment(WGA_EXPERIMENT, environment=self.environment)
@@ -278,6 +300,15 @@ class SharedConfigurationTests(unittest.TestCase):
         self.assertEqual(mapping["training"]["save_steps"], [300])
         self.assertTrue(mapping["training"]["save_every_epoch"])
         self.assertFalse(mapping["training"]["save_final_checkpoint"])
+
+    def test_megatron_mapping_preserves_periodic_checkpoint_interval(self) -> None:
+        config = load_experiment(
+            MEGATRON_EXPERIMENT,
+            environment=self.environment,
+            overrides={"training": {"save_interval_steps": 300}},
+        )
+        mapping = to_megatron_mapping(config)
+        self.assertEqual(mapping["training"]["save_interval_steps"], 300)
 
 
 if __name__ == "__main__":

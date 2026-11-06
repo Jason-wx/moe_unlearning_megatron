@@ -9,7 +9,7 @@ from megatron_unlearning.model_config import build_mcore_config_dict
 
 class ModelConfigTest(unittest.TestCase):
     @staticmethod
-    def _run_config(first=7, last=30):
+    def _run_config(first=7, last=30, recompute=None):
         return from_mapping(
             {
                 "model": {"path": "/model", "num_experts": 256},
@@ -25,6 +25,7 @@ class ModelConfigTest(unittest.TestCase):
                     "expert_parallel": 2,
                     "expert_tensor_parallel": 1,
                     "sequence_parallel": True,
+                    "activation_recompute": recompute,
                     "num_layers_in_first_pipeline_stage": first,
                     "num_layers_in_last_pipeline_stage": last,
                 },
@@ -62,6 +63,33 @@ class ModelConfigTest(unittest.TestCase):
         with patch.dict(sys.modules, self._fake_modules()):
             with self.assertRaisesRegex(ValueError, "middle pipeline stages"):
                 build_mcore_config_dict(self._run_config(first=14, last=26))
+
+    def test_recompute_keys_are_stripped_by_default(self):
+        with patch.dict(sys.modules, self._fake_modules()):
+            result = build_mcore_config_dict(self._run_config())
+        self.assertNotIn("recompute_granularity", result)
+        self.assertNotIn("recompute_method", result)
+
+    def test_full_activation_recompute_is_applied(self):
+        run = self._run_config(recompute="full")
+        with patch.dict(sys.modules, self._fake_modules()):
+            result = build_mcore_config_dict(run)
+        self.assertEqual(result["recompute_granularity"], "full")
+        self.assertEqual(result["recompute_method"], "uniform")
+        self.assertEqual(result["recompute_num_layers"], 1)
+
+    def test_selective_activation_recompute_is_applied(self):
+        run = self._run_config(recompute="selective")
+        with patch.dict(sys.modules, self._fake_modules()):
+            result = build_mcore_config_dict(run)
+        self.assertEqual(result["recompute_granularity"], "selective")
+        self.assertNotIn("recompute_method", result)
+
+    def test_invalid_activation_recompute_is_rejected(self):
+        run = self._run_config(recompute="block")
+        with patch.dict(sys.modules, self._fake_modules()):
+            with self.assertRaisesRegex(ValueError, "activation_recompute"):
+                build_mcore_config_dict(run)
 
 
 if __name__ == "__main__":

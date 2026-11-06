@@ -1,0 +1,91 @@
+# Qwen3.5 main RMU configuration — re-run of the tuned R:F-sweep best arm
+# (steer 300 / alpha 63.4, R:F = 0.005; calibration in
+# configs/training/megatron/qwen35/rmu_calib_20260924.md, sweep report
+# RMU_rf_sweep_report_20260924.md: online 0.323 bio / 0.817 mmlu at step 2142).
+# The sweep arm ran with save_final_checkpoint false, so this main-line re-run
+# saves the final ckpt and unifies eval output into main/qwen35 — same
+# hyperparams, same plan as the rest of the main line (gbs 32 / 3 ep = 2142
+# steps, cosine + 5% warmup, seed 42).
+# activation_recompute must stay null: RMU extracts and backprops from layer 9
+# and full-layer checkpointing runs that hook under no-grad (config guard).
+name: qwen35-main-rmu
+model:
+  name: qwen35
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/qwen/qwen3p5-35b-a3b
+  num_experts: 256
+  trust_remote_code: true
+data:
+  name: wmdp_bio
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/qwen35_wmdp_bio_softpack4096/forget
+  retain_cache: ${OU_CACHE_ROOT}/Xtuner/fineweb_edu_5b_qwen35_softpack4096_seed42
+  sequence_length: 4096
+  pad_token_id: 248044
+  shuffle: false
+algorithm:
+  name: rmu
+  gamma: 1.0
+  alpha: 63.4
+  target_layer: 9
+  train_layers: [7, 8, 9]
+  steering_coeff: 300.0
+  control_norm_mode: fixed
+  control_scale_coeff: 1.0
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 3
+  learning_rate: 1.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 0.0
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: qwen35-main-rmu
+  save_steps: []
+  save_interval_steps: 0
+  save_final_checkpoint: true
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main
+    micro_batch_size: 4
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      # RMU extracts and backprops from layer 9. Full-layer checkpointing runs
+      # that hook under no-grad and detaches the RMU loss; keep it disabled.
+      activation_recompute: null
+      use_distributed_optimizer: true
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_bio, mmlu]
+      num_fewshot: 0
+      # WMDP-Bio remains full-size; MMLU uses 35 questions per leaf subtask.
+      task_limits: {mmlu: 35}
+      # 96 was verified on the qwen35 RMU sweep arms (mbs 4 + frozen reference
+      # resident). Lower to 64/16 only if the first eval forward hits CUDA OOM.
+      batch_size: 96
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/qwen35/online-evaluation
+      # 3 epochs = 2142 steps (22864 packs / gbs 32 = 714 per epoch).
+      steps: [1, 300, 700, 1000, 1400, 1700, 1800, 1900, 2000, 2100, 2142]

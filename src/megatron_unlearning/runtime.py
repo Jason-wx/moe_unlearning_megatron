@@ -156,6 +156,7 @@ def initialize_distributed(run: MegatronRunConfig) -> None:
 def build_model(run: MegatronRunConfig):
     from mcore_bridge import ModelConfig, get_mcore_model
 
+    _patch_mcore_bridge_gemma4()
     config = ModelConfig(**build_mcore_config_dict(run))
     models = get_mcore_model(config)
     for model in models:
@@ -179,6 +180,7 @@ def build_reference_model(run: MegatronRunConfig):
     run.reference.validate()
     from mcore_bridge import ModelConfig, get_mcore_model
 
+    _patch_mcore_bridge_gemma4()
     config = ModelConfig(**build_mcore_config_dict(run))
     models = get_mcore_model(config)
     for model in models:
@@ -186,6 +188,39 @@ def build_reference_model(run: MegatronRunConfig):
     config.bridge.load_weights(models, run.reference.path or run.model.path)
     _freeze_reference_parameters(models)
     return models, config
+
+
+def _patch_mcore_bridge_gemma4() -> None:
+    """Compatibility shim for mcore-bridge 1.6.1 nested Gemma4 configs.
+
+    ``Gemma4ForConditionalGeneration`` checkpoints keep the language-model
+    ``hidden_size`` inside ``hf_config.text_config`` (2816 for gemma-26b-a4b),
+    but upstream ``Gemma4Vit.prepare_language_model`` reads the top-level
+    ``hf_config.hidden_size`` and crashes on every rank during model
+    construction.  Resolve the nested value when present; keep the upstream
+    fallback for flattened/language-only Gemma4 configs.
+    """
+    from mcore_bridge.model.mm_gpts import gemma4 as mcore_gemma4
+
+    def prepare_language_model(self, hf_config):
+        text_config = getattr(hf_config, "text_config", None) or hf_config
+        hidden_size = getattr(text_config, "hidden_size", None)
+        if hidden_size is None:
+            hidden_size = getattr(hf_config, "hidden_size", None)
+        if hidden_size is None:
+            raise AttributeError("Gemma4Config has no hidden_size in text_config or the top level")
+        dtype = (
+            getattr(hf_config, "torch_dtype", None)
+            or getattr(text_config, "torch_dtype", None)
+            or torch.float32
+        )
+        self.register_buffer(
+            "embed_scale",
+            torch.tensor(hidden_size**0.5).to(dtype),
+            persistent=False,
+        )
+
+    mcore_gemma4.Gemma4Vit.prepare_language_model = prepare_language_model
 
 
 def _freeze_reference_parameters(models) -> None:
@@ -286,7 +321,10 @@ def _set_trainable_parameters(
         for category, layer_index, name in matched_names:
             print(f"trainable {category}: layer={layer_index} {name}", flush=True)
         if matched > len(matched_names):
-            print(f"... {matched - len(matched_names)} more local trainable tensors omitted", flush=True)
+            print(
+                f"... {matched - len(matched_names)} more local trainable tensors omitted",
+                flush=True,
+            )
 
 
 def wrap_distributed_and_build_optimizer(run: MegatronRunConfig, models, model_config):
@@ -374,6 +412,53 @@ def optimizer_learning_rate(optimizer) -> float:
     if value is None:
         value = optimizer.param_groups[0]["lr"]
     return float(value)
+
+
+def _pdu_split_forward_from_config(run: MegatronRunConfig) -> bool:
+    """Decide the PDU split forward from configuration, not model attributes.
+
+    The per-role split forward avoids materializing a full-logits tensor with
+    more than int32-max elements: gemma4's paired (forget+retain) microbatch
+    is 2 x micro_batch packs x seq 4096 x vocab 262144 = 2**31 elements
+    exactly, which corrupts memory and crashes TE rmsnorm_bwd. Computing the
+    element count here from the HF config and batching parameters keeps the
+    guard independent of DDP/bridge wrapper internals (the attribute-based
+    lookup in forward_step failed to resolve the vocab through the real
+    wrapper chain — debug round 7, 2026-09-29).
+    """
+    import json
+
+    config_path = Path(run.model.path) / "config.json"
+    try:
+        hf_config = json.loads(config_path.read_text())
+    except (OSError, ValueError):
+        hf_config = {}
+    vocab = hf_config.get("vocab_size")
+    if vocab is None:
+        vocab = (hf_config.get("text_config") or {}).get("vocab_size")
+    if vocab is None:
+        if not (dist.is_available() and dist.is_initialized()) or dist.get_rank() == 0:
+            print(
+                "[pdu-split-guard] vocab_size not found in the HF config; "
+                "cannot decide the split forward from configuration",
+                flush=True,
+            )
+        return False
+    # Paired datasets emit one forget + one retain pack per item, so a
+    # microbatch holds 2 x micro_batch_size packs when retain data is used.
+    packs = run.training.micro_batch_size * (2 if algorithm_uses_retain(run.algorithm) else 1)
+    seq = run.data.sequence_length
+    context_parallel = getattr(run.parallel, "context_parallel_size", 1) or 1
+    elements = packs * seq * vocab // context_parallel
+    split = elements > 2**31 - 1
+    if not (dist.is_available() and dist.is_initialized()) or dist.get_rank() == 0:
+        print(
+            "[pdu-split-guard] config guard: "
+            f"packs={packs} seq={seq} vocab={vocab} cp={context_parallel} "
+            f"elements={elements} int32_max={2**31 - 1} split={split}",
+            flush=True,
+        )
+    return split
 
 
 def build_data_loader(run: MegatronRunConfig):
@@ -468,11 +553,22 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
     )
     if max_steps <= 0:
         raise RuntimeError("dataset is too small for one global batch")
+    save_steps = set(run.training.save_steps)
+    if run.training.save_interval_steps > 0:
+        save_steps.update(
+            range(run.training.save_interval_steps, max_steps + 1, run.training.save_interval_steps)
+        )
     optimizer_scheduler = build_optimizer_scheduler(run, optimizer, max_steps)
-    unreachable_save_steps = [step for step in run.training.save_steps if step > max_steps]
+    unreachable_save_steps = sorted(step for step in save_steps if step > max_steps)
     if unreachable_save_steps:
         raise ValueError(
             f"save_steps {unreachable_save_steps} exceed the training endpoint {max_steps}"
+        )
+    eval_steps = set(run.evaluation.steps) if run.evaluation.enabled else set()
+    unreachable_eval_steps = sorted(step for step in eval_steps if step > max_steps)
+    if unreachable_eval_steps:
+        raise ValueError(
+            f"evaluation.steps {unreachable_eval_steps} exceed the training endpoint {max_steps}"
         )
     if rmu_state is not None:
         rmu_state.loss_scale = 1.0 / num_microbatches
@@ -483,6 +579,7 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
     pdu_state = (
         PDUState(retain_preference=run.algorithm.alpha) if run.algorithm.name == "pdu" else None
     )
+    pdu_force_split = _pdu_split_forward_from_config(run) if pdu_state is not None else False
     benchmark_records: list[dict[str, object]] = []
 
     from megatron.core import parallel_state
@@ -502,6 +599,8 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
             f"global_batch_size={run.training.global_batch_size} "
             f"micro_batches_per_step={num_microbatches} "
             f"epochs={run.training.num_train_epochs} "
+            f"save_interval_steps={run.training.save_interval_steps} "
+            f"save_steps={sorted(save_steps)} "
             f"lr_schedule={run.optimizer.lr_scheduler_type} "
             f"lr_warmup_steps={optimizer_scheduler.lr_warmup_steps} "
             f"lr_decay_steps={optimizer_scheduler.lr_decay_steps}",
@@ -651,11 +750,76 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
             progress_bar.update(1)
         if not success:
             raise FloatingPointError(f"optimizer rejected step {step + 1}")
-        if save_weights and (step + 1) in run.training.save_steps:
+        if save_weights and (step + 1) in save_steps:
             export_model_weights(Path(run.training.output_dir) / f"checkpoint-step-{step + 1}")
         if save_weights and run.training.save_every_epoch and (step + 1) % steps_per_epoch == 0:
             epoch = (step + 1) // steps_per_epoch
             export_model_weights(Path(run.training.output_dir) / f"checkpoint-epoch-{epoch}")
+        if run.evaluation.enabled and (step + 1) in eval_steps:
+            # All ranks participate in the DP all-gather inside the evaluator.
+            # The forward runs after this step's timing/peak-memory stats are
+            # already recorded and before the next loop's reset, so it does not
+            # pollute either. eval()/train() and RNG state are handled inside.
+            from .online_eval import (
+                _append_online_eval_record,
+                run_online_evaluation,
+            )
+
+            # Give the eval forward the widest possible memory headroom: this
+            # step's gradients are already consumed by optimizer.step() above,
+            # but they are only released at the top of the next iteration, so
+            # without this they stay resident across the whole evaluation.
+            # zero_grad_buffer() zeroes MCore's persistent contiguous grad
+            # buffer (no free) while DistributedOptimizer.zero_grad() sets the
+            # model/shard .grad tensors to None, which does free them. Both are
+            # idempotent with the next iteration's calls. The empty_cache() pair
+            # then hands the freed blocks (and afterwards the eval's transients)
+            # back to the allocator instead of leaving them reserved.
+            for model in models:
+                model.zero_grad_buffer()
+            optimizer.zero_grad()
+            torch.cuda.empty_cache()
+            try:
+                if rmu_state is None:
+                    accuracies = run_online_evaluation(
+                        models,
+                        tokenizer,
+                        run.evaluation,
+                        sequence_length=run.data.sequence_length,
+                        device=torch.cuda.current_device(),
+                    )
+                else:
+                    # Online evaluation performs ordinary student forwards. RMU's
+                    # activation hooks expect a training batch/reference pair and
+                    # must not intercept those forwards.
+                    with rmu_state.hooks_disabled():
+                        accuracies = run_online_evaluation(
+                            models,
+                            tokenizer,
+                            run.evaluation,
+                            sequence_length=run.data.sequence_length,
+                            device=torch.cuda.current_device(),
+                        )
+            finally:
+                torch.cuda.empty_cache()
+            if dist.get_rank() == 0:
+                print(
+                    f"online_eval_step={step + 1} "
+                    + " ".join(f"{task}={acc:.4f}" for task, acc in accuracies.items()),
+                    flush=True,
+                )
+                if run.evaluation.output_dir:
+                    _append_online_eval_record(
+                        run.evaluation.output_dir,
+                        os.path.basename(run.training.output_dir.rstrip("/")),
+                        step + 1,
+                        accuracies,
+                    )
+            if wandb_run is not None:
+                wandb_run.log(
+                    {f"eval/{task}_acc": acc for task, acc in accuracies.items()},
+                    step=step + 1,
+                )
 
     for step in range(max_steps):
         torch.cuda.synchronize()
@@ -678,6 +842,7 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
                 forward_step,
                 algorithm=run.algorithm,
                 pdu_state=pdu_state,
+                force_split=pdu_force_split,
             )
             losses = schedule(
                 forward_step_func=step_fn,
@@ -721,9 +886,7 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
                 metrics = aggregate_step_metrics(rmu_state.step_metrics)
                 if not metrics:
                     metrics = aggregate_step_metrics(losses)
-                finish_step(
-                    step, success, grad_norm, metrics, step_started_at, learning_rate
-                )
+                finish_step(step, success, grad_norm, metrics, step_started_at, learning_rate)
                 continue
             reference_step_fn = partial(
                 reference_forward_step,
@@ -809,10 +972,17 @@ def train(run: MegatronRunConfig, *, save_weights: bool = True) -> None:
         print(f"benchmark_summary={summary}", flush=True)
 
     if save_weights and not run.training.save_every_epoch:
-        final_output_dir = Path(run.training.output_dir)
         if run.training.save_final_checkpoint:
-            final_output_dir /= f"checkpoint-step-{max_steps}"
-        export_model_weights(final_output_dir)
+            final_output_dir = Path(run.training.output_dir) / f"checkpoint-step-{max_steps}"
+            export_model_weights(final_output_dir)
+        elif dist.get_rank() == 0:
+            print(
+                "save_final_checkpoint=false; final checkpoint export skipped",
+                flush=True,
+            )
+            dist.barrier()
+        else:
+            dist.barrier()
     elif save_weights:
         if dist.get_rank() == 0:
             print(

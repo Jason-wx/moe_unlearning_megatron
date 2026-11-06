@@ -1,0 +1,86 @@
+# Gemma4 FINAL line — nocap shadow model + BOS-anchored caches, final ckpt
+# saved. Regime proven by the 10-03 BOS ablation (GD 0.79->0.273/0.725 with
+# MMLU -4.2pt while every no-BOS run froze at 0.78-0.80); all pre-BOS
+# gemma4-bio results are superseded. Online-eval records ->
+# main/gemma4/configs-final/online-evaluation/; weights ->
+# /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main/<output_name>/checkpoint-step-2133 (~66G each).
+# Base: bos-ablation/grad_diff_nocap.yaml (identical plan; only the
+# rename + final-ckpt saving differ). bos-ablation outcome: healthy —
+# monotone 0.79 -> 0.273/0.725, margin 0.452 at the final step.
+name: gemma4-final-grad-diff-nocap
+model:
+  name: gemma4
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/gemma/gemma-26b-a4b-nocap
+  num_experts: 128
+  trust_remote_code: true
+data:
+  name: wmdp_bio
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/gemma4_wmdp_bio_softpack4096_bos/forget
+  retain_cache: ${OU_CACHE_ROOT}/Xtuner/fineweb_edu_5b_gemma4_softpack4096_bos_seed42
+  sequence_length: 4096
+  pad_token_id: 0
+  shuffle: false
+algorithm:
+  name: grad_diff
+  gamma: 1.0
+  alpha: 1.0
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 3
+  learning_rate: 1.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 0.0
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: gemma4-final-grad-diff-nocap
+  save_steps: []
+  save_interval_steps: 0
+  save_final_checkpoint: true
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main
+    micro_batch_size: 1
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      activation_recompute: full
+      use_distributed_optimizer: true
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_bio, mmlu]
+      num_fewshot: 0
+      # WMDP-Bio remains full-size; MMLU uses 35 questions per leaf subtask.
+      task_limits: {mmlu: 35}
+      # GradDiff keeps a frozen reference resident, but the mbs-1 static
+      # profile leaves enough headroom: eval batch_size 64 (was 16 as the
+      # conservative fallback on earlier lines; raised 2026-09-30 to match
+      # the rest of the family — eval speed only, no effect on scores).
+      batch_size: 64
+      # NOCAP runs keep their online-eval records separate from the capped
+      # line (which stays in main/gemma4/online-evaluation).
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/gemma4/configs-final/online-evaluation
+      steps: [1, 300, 700, 1000, 1400, 1700, 1800, 1900, 2000, 2100, 2133]

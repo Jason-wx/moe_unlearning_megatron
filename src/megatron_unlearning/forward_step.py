@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from functools import partial
 
 import torch
 import torch.distributed as dist
+
+# Debug switch for the gemma4 x PDU rmsnorm_bwd illegal-memory-access:
+# OU_PDU_BISECT=forget keeps only the forget dispersion term in the loss,
+# =retain keeps only the dual retain term (forward metrics unchanged), to
+# bisect which side of the PDU objective triggers the crash. Off by default.
+_PDU_BISECT = os.environ.get("OU_PDU_BISECT", "")
+_PDU_SPLIT_FORWARD = os.environ.get("OU_PDU_SPLIT_FORWARD", "") == "1"
 
 from .batching import FORGET_ROLE, RETAIN_ROLE
 from .config import FULL_LOGIT_ALGORITHMS, AlgorithmConfig
@@ -31,6 +39,11 @@ class PDUState:
     retain_preference: float
 
     def update(self, violation: torch.Tensor, step_size: float) -> None:
+        # Debug gate (round 4): skip the mid-forward all_reduce + .item() host
+        # sync entirely to test whether PDUState.update triggers the gemma4
+        # rmsnorm_bwd illegal access. lambda simply stays at its initial value.
+        if os.environ.get("OU_PDU_NO_DUAL_UPDATE", "") == "1":
+            return
         value = violation.detach().float().clone()
         if dist.is_available() and dist.is_initialized():
             from megatron.core import parallel_state
@@ -39,6 +52,30 @@ class PDUState:
             dist.all_reduce(value, group=group)
             value /= dist.get_world_size(group)
         self.retain_preference = max(0.0, self.retain_preference + step_size * value.item())
+
+
+def extra_model_kwargs(model, batch: dict) -> dict:
+    """Bridge-specific forward kwargs required by the wrapped language model.
+
+    mcore-bridge's ``MultimodalGPTModel.forward`` requires every key declared in
+    ``language_model.extra_forward_keys`` to be present in the call kwargs even
+    for pure-text batches. Gemma4 declares ``mm_token_type_ids`` there; the
+    value is unused for text-only data (the bridge pops it with a ``None``
+    default and only consumes it for vision bidirectional attention), so take
+    it from the batch when a cache provides it and otherwise pass ``None``.
+    """
+    # Megatron may wrap the module (DDP / Float16Module); unwrap to the bridge
+    # model that actually owns ``language_model.extra_forward_keys``.
+    for _ in range(16):
+        inner = getattr(model, "module", None)
+        if inner is None:
+            break
+        model = inner
+    language_model = getattr(model, "language_model", None)
+    if language_model is None:
+        language_model = model
+    keys = getattr(language_model, "extra_forward_keys", None) or ()
+    return {key: batch.get(key) for key in keys}
 
 
 def reduce_role_losses(
@@ -86,6 +123,11 @@ def reduce_role_losses(
         forget_objective, extra = objective(losses, forget_role_mask, beta=beta, delta=delta)
         metrics.update({key: value.detach() for key, value in extra.items()})
         metrics["forget_loss"] = forget_objective.detach()
+        if alpha == 0.0:
+            # Forget-only SimNPO (the paper's published WMDP configuration):
+            # skip the retain reduction so forget-only batches stay valid.
+            metrics["weighted_forget_loss"] = (gamma * forget_objective).detach()
+            return gamma * forget_objective, metrics
     elif algorithm == "wga":
         forget_objective, extra = wga_objective(losses, forget_role_mask, beta=beta)
         metrics.update({key: value.detach() for key, value in extra.items()})
@@ -145,6 +187,25 @@ def reduce_role_logits(
         raise ValueError("PDU requires mutable dual state")
 
     retain_rows = roles.eq(RETAIN_ROLE)
+    # Round-5 branch-level bisect: unlike the round-3 gate (which only
+    # reweighted the loss AFTER both branches had already executed their
+    # forward ops), these arms skip the other branch's computation entirely.
+    # The "forget" arm is structurally identical to CEU's early-return path,
+    # which runs clean on gemma4 — the never-tested PDU-specific ops live in
+    # the retain branch (logits[retain_rows] indexing + full-vocab NLL).
+    if _PDU_BISECT == "forget":
+        loss = config.gamma * pdu_forget_objective(logits[forget_rows], loss_mask[forget_rows])
+        return loss, {"forget_loss": loss.detach()}
+    if _PDU_BISECT == "retain":
+        if not torch.any(retain_rows):
+            raise ValueError("PDU batch contains no retain rows")
+        token_nll = vocab_parallel_token_nll(logits[retain_rows], labels[retain_rows])
+        retain_loss = (token_nll * loss_mask[retain_rows]).sum() / loss_mask[retain_rows].sum()
+        violation = retain_loss - config.retain_loss_eps
+        return pdu_state.retain_preference * violation, {
+            "retain_loss": retain_loss.detach(),
+            "retain_violation": violation.detach(),
+        }
     if not torch.any(retain_rows):
         raise ValueError("PDU batch contains no retain rows")
     forget_loss = pdu_forget_objective(logits[forget_rows], loss_mask[forget_rows])
@@ -193,15 +254,32 @@ def reduce_reference_outputs(
         metrics["forget_valid_tokens"] = batch["loss_mask"][forget_rows].sum().detach()
         metrics["forget_loss"] = loss.detach()
         metrics["weighted_forget_loss"] = (config.gamma * loss).detach()
-        return config.gamma * loss, metrics
+        total_loss = config.gamma * loss
+        if config.name in {"npo", "pure_npo"} and config.alpha != 0.0:
+            # Optional retain-NLL anchor for NPO/PureNPO: keep the forget
+            # objective (sum-based for npo, length-normalized for pure_npo),
+            # then add alpha * mean retain token NLL.
+            retain_rows = roles.eq(RETAIN_ROLE)
+            if not torch.any(retain_rows):
+                raise ValueError(f"{config.name} with nonzero alpha requires retain rows")
+            retain_mask = batch["loss_mask"][retain_rows]
+            retain_nll = (output[retain_rows].float() * retain_mask).sum() / retain_mask.sum()
+            total_loss = total_loss + config.alpha * retain_nll
+            metrics["retain_loss"] = retain_nll.detach()
+            metrics["retain_valid_tokens"] = retain_mask.sum().detach()
+            metrics["weighted_retain_loss"] = (config.alpha * retain_nll).detach()
+        return total_loss, metrics
 
     if config.name != "undial":
         raise ValueError(f"unsupported reference algorithm: {config.name}")
+    # Forget-only UNDIAL batches contain no retain rows; skip the boolean-index
+    # copy (and its scatter backward) of the full-vocab logits in that case.
+    all_forget = bool(torch.all(forget_rows))
     forget_loss, metrics = undial_objective(
-        output[forget_rows],
+        output if all_forget else output[forget_rows],
         reference_output,
-        batch["labels"][forget_rows],
-        batch["loss_mask"][forget_rows],
+        batch["labels"] if all_forget else batch["labels"][forget_rows],
+        batch["loss_mask"] if all_forget else batch["loss_mask"][forget_rows],
         beta=config.beta,
     )
     loss = config.gamma * forget_loss
@@ -271,6 +349,150 @@ def _loss_func(
     return loss * loss_scale, metrics
 
 
+def _pdu_split_forward(
+    batch: dict[str, torch.Tensor],
+    model,
+    *,
+    config: AlgorithmConfig,
+    pdu_state: PDUState | None,
+    loss_scale: float,
+):
+    """Round-6 int32-overflow hypothesis test and fix candidate.
+
+    A PDU microbatch mixes one forget and one retain pack, so the model's
+    full-logits output on gemma4 is 2 x 4096 x 262144 = 2**31 elements —
+    exactly INT32_MAX + 1 — which is the suspected root cause of the
+    deterministic rmsnorm_bwd illegal access (every run holding a >=2**31
+    element logit tensor crashes; CEU's 2**30 forget-only batch and qwen35's
+    smaller vocab run clean). Forward each role separately, matching the
+    CEU-proven per-forward size, and combine the two PDU loss terms.
+    """
+    if pdu_state is None:
+        raise ValueError("PDU requires mutable dual state")
+    roles = batch["roles"]
+    forget_rows = roles.eq(FORGET_ROLE)
+    retain_rows = ~forget_rows
+    if not torch.any(forget_rows) or not torch.any(retain_rows):
+        raise ValueError("PDU split forward requires both roles in the batch")
+
+    extra_kwargs = extra_model_kwargs(model, batch)
+    batch_size = batch["input_ids"].shape[0]
+
+    def run(rows: torch.Tensor):
+        # Slice per-example tensor kwargs along dim 0; pass non-tensor values
+        # (e.g. the gemma4 mm_token_type_ids=None text-only placeholder)
+        # through unchanged — the bridge requires every declared key present.
+        row_kwargs = {
+            key: (
+                value[rows]
+                if torch.is_tensor(value) and value.shape[:1] == (batch_size,)
+                else value
+            )
+            for key, value in extra_kwargs.items()
+        }
+        return model(
+            input_ids=batch["input_ids"][rows],
+            position_ids=batch["position_ids"][rows],
+            attention_mask=batch["attention_mask"][rows],
+            labels=None,
+            loss_mask=batch["loss_mask"][rows],
+            **row_kwargs,
+        )
+
+    forget_logits = run(forget_rows)
+    retain_logits = run(retain_rows)
+    forget_mask = batch["loss_mask"][forget_rows]
+    forget_loss = pdu_forget_objective(forget_logits, forget_mask)
+    retain_mask = batch["loss_mask"][retain_rows]
+    token_nll = vocab_parallel_token_nll(retain_logits, batch["labels"][retain_rows])
+    retain_loss = (token_nll * retain_mask).sum() / retain_mask.sum()
+    violation = retain_loss - config.retain_loss_eps
+    preference = pdu_state.retain_preference
+    loss = config.gamma * forget_loss + preference * violation
+    if config.primal_dual:
+        pdu_state.update(violation, config.dual_step_size)
+    metrics = {
+        "total_loss": loss.detach(),
+        "forget_loss": forget_loss.detach(),
+        "weighted_forget_loss": (config.gamma * forget_loss).detach(),
+        "retain_loss": retain_loss.detach(),
+        "retain_violation": violation.detach(),
+        "retain_preference": loss.detach().new_tensor(preference),
+        "weighted_retain_penalty": (preference * violation).detach(),
+    }
+
+    # The loss itself is the schedule's output tensor (same graph-tensor
+    # pattern as the RMU dummy loss); autograd.backward propagates through
+    # both role forwards from here.
+    def loss_fn(output: torch.Tensor, **_: object):
+        return output * loss_scale, metrics
+
+    return loss, loss_fn
+
+
+def _unwrap_module(model, depth: int = 16):
+    """Unwrap DDP/Float16Module-style chains down to the bridge model."""
+    for _ in range(depth):
+        inner = getattr(model, "module", None)
+        if inner is None:
+            break
+        model = inner
+    return model
+
+
+def _model_vocab_size(model) -> int | None:
+    """Best-effort vocab size lookup for the int32-overflow guard."""
+    inner = _unwrap_module(model)
+    for candidate in (
+        getattr(inner, "output_layer", None),
+        getattr(getattr(inner, "language_model", None), "output_layer", None),
+    ):
+        weight = getattr(candidate, "weight", None)
+        if weight is not None and weight.dim() == 2:
+            return int(weight.shape[0])
+    return None
+
+
+def _pdu_needs_split_forward(model, batch: dict[str, torch.Tensor]) -> bool:
+    """True when the mixed-batch full logits would exceed int32 element
+    indexing (2**31 - 1). gemma4 hits this exactly: 2 packs x 4096 seq x
+    262144 vocab = 2**31 elements -> deterministic rmsnorm_bwd illegal
+    access (debug rounds 1-5, fixed by the split forward in round 6)."""
+    vocab = _model_vocab_size(model)
+    if vocab is None:
+        _log_pdu_guard_once(
+            "vocab size not resolvable from the model; split forward NOT auto-enabled"
+        )
+        return False
+    rows, seq = batch["input_ids"].shape[:2]
+    elements = rows * seq * vocab
+    split = elements > 2**31 - 1
+    _log_pdu_guard_once(
+        f"pdu full-logit guard: rows={rows} seq={seq} vocab={vocab} "
+        f"elements={elements} int32_max={2**31 - 1} split={split}"
+    )
+    return split
+
+
+_PDU_GUARD_LOGGED = False
+
+
+def _log_pdu_guard_once(message: str) -> None:
+    """Rank-0 one-shot diagnostic for the int32-overflow guard decision."""
+    global _PDU_GUARD_LOGGED
+    if _PDU_GUARD_LOGGED:
+        return
+    _PDU_GUARD_LOGGED = True
+    try:
+        import torch.distributed as dist
+
+        if dist.is_available() and dist.is_initialized() and dist.get_rank() != 0:
+            return
+    except Exception:  # noqa: BLE001, S110 - rank lookup is best-effort; fall back to printing
+        pass
+    print(f"[pdu-split-guard] {message}", flush=True)
+
+
 def forward_step(
     data_iterator,
     model,
@@ -279,14 +501,33 @@ def forward_step(
     pdu_state: PDUState | None = None,
     reference_outputs=None,
     loss_scale: float = 1.0,
+    force_split: bool | None = None,
 ):
     batch = next(data_iterator)
+    # Split decision precedence: env override > explicit config-derived flag
+    # (runtime computes it from the HF config + batching parameters) >
+    # attribute-based introspection of the wrapped model (diagnostics only —
+    # it failed to resolve the vocab through the real DDP/bridge chain in
+    # debug round 7).
+    if algorithm.name == "pdu" and (
+        _PDU_SPLIT_FORWARD
+        or force_split is True
+        or (force_split is None and _pdu_needs_split_forward(model, batch))
+    ):
+        return _pdu_split_forward(
+            batch,
+            model,
+            config=algorithm,
+            pdu_state=pdu_state,
+            loss_scale=loss_scale,
+        )
     output = model(
         input_ids=batch["input_ids"],
         position_ids=batch["position_ids"],
         attention_mask=batch["attention_mask"],
         labels=None if algorithm.name in FULL_LOGIT_ALGORITHMS else batch["labels"],
         loss_mask=batch["loss_mask"],
+        **extra_model_kwargs(model, batch),
     )
     return output, partial(
         _loss_func,
@@ -315,6 +556,7 @@ def reference_forward_step(data_iterator, model, *, algorithm: AlgorithmConfig):
             else None
         ),
         loss_mask=reference_batch["loss_mask"],
+        **extra_model_kwargs(model, reference_batch),
     )
 
     def collect_reference(value: torch.Tensor, *, non_loss_data: bool = False):
@@ -347,6 +589,7 @@ def rmu_forward_step(data_iterator, model, *, state: RMUHookState):
                 attention_mask=batch["attention_mask"],
                 labels=batch["labels"],
                 loss_mask=batch["loss_mask"],
+                **extra_model_kwargs(model, batch),
             )
         except RMUTargetLayerReached as reached:
             output = reached.activation
@@ -365,6 +608,7 @@ def rmu_reference_forward_step(data_iterator, model, *, state: RMUHookState):
                 attention_mask=batch["attention_mask"],
                 labels=batch["labels"],
                 loss_mask=batch["loss_mask"],
+                **extra_model_kwargs(model, batch),
             )
         except RMUTargetLayerReached as reached:
             output = reached.activation

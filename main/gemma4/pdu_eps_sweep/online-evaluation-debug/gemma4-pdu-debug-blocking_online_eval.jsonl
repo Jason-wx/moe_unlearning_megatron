@@ -1,0 +1,2 @@
+{"run": "gemma4-pdu-debug-blocking", "step": 1, "unix_time": 1790662722.7206385, "wmdp_bio": 0.7910447761194029, "mmlu": 0.7644110275689223}
+{"run": "gemma4-pdu-debug-blocking", "step": 1, "unix_time": 1790665011.0759134, "wmdp_bio": 0.786331500392773, "mmlu": 0.7699248120300752}

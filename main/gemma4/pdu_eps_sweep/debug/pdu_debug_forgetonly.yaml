@@ -1,0 +1,79 @@
+# Debug arm 2 (
+# (activation_recompute: full, the crashing layout) except the runner exports
+# OU_PDU_CONTIG_LOSS=1 so src/megatron_unlearning/objectives.py computes the
+# PDU full-vocab losses on fully contiguous fp32 tensors (plain 2D CE, no
+# transpose().float() strided copy). If this trains through, the sweep arms
+# can be resubmitted with that env var alone. 2 steps only.
+name: gemma4-pdu-debug-forgetonly
+model:
+  name: gemma4
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/gemma/gemma-26b-a4b
+  num_experts: 128
+  trust_remote_code: true
+data:
+  name: wmdp_bio
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/gemma4_wmdp_bio_softpack4096/forget
+  retain_cache: ${OU_CACHE_ROOT}/Xtuner/fineweb_edu_5b_gemma4_softpack4096_seed42
+  sequence_length: 4096
+  pad_token_id: 0
+  shuffle: false
+algorithm:
+  name: pdu
+  gamma: 1.0
+  alpha: 1.0
+  retain_loss_eps: 2.00
+  primal_dual: true
+  dual_step_size: 0.1
+training:
+  global_batch_size: 32
+  train_steps: 2
+  num_train_epochs: 3
+  learning_rate: 4.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 0.0
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: gemma4-pdu-debug-forgetonly
+  save_steps: []
+  save_interval_steps: 0
+  save_final_checkpoint: false
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/gemma4/pdu_eps_sweep/debug
+    micro_batch_size: 1
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      activation_recompute: full
+      use_distributed_optimizer: true
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_bio, mmlu]
+      num_fewshot: 0
+      task_limits: {mmlu: 35}
+      batch_size: 64
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/gemma4/pdu_eps_sweep/online-evaluation-debug
+      steps: [1]

@@ -1,0 +1,537 @@
+{
+  "description": "Baseline retain-NLL anchor for PDU retain_loss_eps calibration",
+  "created": "2026-09-28T13:17:02.290530+00:00",
+  "config": {
+    "model_preset": "gemma4",
+    "model_path": "/mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/gemma/gemma-26b-a4b",
+    "model_handler": "AutoModelForCausalLM",
+    "cache": "/mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/data_cache/Xtuner/fineweb_edu_5b_gemma4_softpack4096_seed42",
+    "cache_format": "xtuner_softpack_v1",
+    "cache_num_chunks": 1115271,
+    "num_samples": 200,
+    "batch_size": 4,
+    "seed": 42,
+    "sample_mode": "random",
+    "sequence_length": 4096,
+    "pad_token_id": 0,
+    "dtype": "bfloat16",
+    "ce_chunk": 512,
+    "num_gpus": 4
+  },
+  "summary": {
+    "pooled_nll": 2.094465415235334,
+    "mean_batch_nll": 2.0947710850462693,
+    "std_batch_nll": 0.13285176825203085,
+    "se_mean": 0.01878807724472694,
+    "min": 1.688625472350887,
+    "p25": 2.0275285053467322,
+    "median": 2.108307653339949,
+    "p75": 2.1825600550280178,
+    "max": 2.3526966072876005
+  },
+  "total_valid_tokens": 784498,
+  "batches": [
+    {
+      "batch": 0,
+      "first_chunk_index": 413114,
+      "nll": 2.0281769472911177,
+      "num_tokens": 15936
+    },
+    {
+      "batch": 1,
+      "first_chunk_index": 101000,
+      "nll": 1.9628652133403943,
+      "num_tokens": 15785
+    },
+    {
+      "batch": 2,
+      "first_chunk_index": 260893,
+      "nll": 2.0648352677919855,
+      "num_tokens": 15416
+    },
+    {
+      "batch": 3,
+      "first_chunk_index": 619648,
+      "nll": 2.0764629120810976,
+      "num_tokens": 15748
+    },
+    {
+      "batch": 4,
+      "first_chunk_index": 870245,
+      "nll": 2.225435177636756,
+      "num_tokens": 15726
+    },
+    {
+      "batch": 5,
+      "first_chunk_index": 957402,
+      "nll": 2.115812425589381,
+      "num_tokens": 15880
+    },
+    {
+      "batch": 6,
+      "first_chunk_index": 38690,
+      "nll": 1.70974961867096,
+      "num_tokens": 16052
+    },
+    {
+      "batch": 7,
+      "first_chunk_index": 617353,
+      "nll": 2.0840864835862645,
+      "num_tokens": 15551
+    },
+    {
+      "batch": 8,
+      "first_chunk_index": 211287,
+      "nll": 1.968494475307223,
+      "num_tokens": 15634
+    },
+    {
+      "batch": 9,
+      "first_chunk_index": 738187,
+      "nll": 2.0493666551739818,
+      "num_tokens": 15465
+    },
+    {
+      "batch": 10,
+      "first_chunk_index": 363339,
+      "nll": 2.165626191607527,
+      "num_tokens": 15817
+    },
+    {
+      "batch": 11,
+      "first_chunk_index": 140831,
+      "nll": 2.1810977015245263,
+      "num_tokens": 15142
+    },
+    {
+      "batch": 12,
+      "first_chunk_index": 516245,
+      "nll": 2.2251735779349002,
+      "num_tokens": 15699
+    },
+    {
+      "batch": 13,
+      "first_chunk_index": 336264,
+      "nll": 1.688625472350887,
+      "num_tokens": 15632
+    },
+    {
+      "batch": 14,
+      "first_chunk_index": 897443,
+      "nll": 2.1683144738856295,
+      "num_tokens": 15617
+    },
+    {
+      "batch": 15,
+      "first_chunk_index": 828960,
+      "nll": 2.2223356872045694,
+      "num_tokens": 15708
+    },
+    {
+      "batch": 16,
+      "first_chunk_index": 321533,
+      "nll": 2.1602944904643366,
+      "num_tokens": 15755
+    },
+    {
+      "batch": 17,
+      "first_chunk_index": 155900,
+      "nll": 2.2300233892144776,
+      "num_tokens": 16018
+    },
+    {
+      "batch": 18,
+      "first_chunk_index": 1110890,
+      "nll": 2.318830727374574,
+      "num_tokens": 15258
+    },
+    {
+      "batch": 19,
+      "first_chunk_index": 456338,
+      "nll": 1.9487164797710477,
+      "num_tokens": 15934
+    },
+    {
+      "batch": 20,
+      "first_chunk_index": 408855,
+      "nll": 2.1066252901607427,
+      "num_tokens": 15650
+    },
+    {
+      "batch": 21,
+      "first_chunk_index": 609494,
+      "nll": 2.3526966072876005,
+      "num_tokens": 15884
+    },
+    {
+      "batch": 22,
+      "first_chunk_index": 97753,
+      "nll": 1.97381897590421,
+      "num_tokens": 15808
+    },
+    {
+      "batch": 23,
+      "first_chunk_index": 634252,
+      "nll": 2.211026306539132,
+      "num_tokens": 15780
+    },
+    {
+      "batch": 24,
+      "first_chunk_index": 108423,
+      "nll": 2.2557093443602727,
+      "num_tokens": 15490
+    },
+    {
+      "batch": 25,
+      "first_chunk_index": 640794,
+      "nll": 1.9385091874883351,
+      "num_tokens": 16074
+    },
+    {
+      "batch": 26,
+      "first_chunk_index": 555100,
+      "nll": 1.9161044987913165,
+      "num_tokens": 15823
+    },
+    {
+      "batch": 27,
+      "first_chunk_index": 494451,
+      "nll": 2.109990016519156,
+      "num_tokens": 15465
+    },
+    {
+      "batch": 28,
+      "first_chunk_index": 458154,
+      "nll": 2.20795165564003,
+      "num_tokens": 15677
+    },
+    {
+      "batch": 29,
+      "first_chunk_index": 466122,
+      "nll": 2.0889878939419333,
+      "num_tokens": 15663
+    },
+    {
+      "batch": 30,
+      "first_chunk_index": 587067,
+      "nll": 2.072526705620816,
+      "num_tokens": 15983
+    },
+    {
+      "batch": 31,
+      "first_chunk_index": 1028740,
+      "nll": 2.128104893410853,
+      "num_tokens": 16125
+    },
+    {
+      "batch": 32,
+      "first_chunk_index": 729895,
+      "nll": 1.9141455591367027,
+      "num_tokens": 15317
+    },
+    {
+      "batch": 33,
+      "first_chunk_index": 496994,
+      "nll": 2.1236738946402873,
+      "num_tokens": 15548
+    },
+    {
+      "batch": 34,
+      "first_chunk_index": 358231,
+      "nll": 2.092927144714947,
+      "num_tokens": 15268
+    },
+    {
+      "batch": 35,
+      "first_chunk_index": 179192,
+      "nll": 2.2128617864603877,
+      "num_tokens": 15213
+    },
+    {
+      "batch": 36,
+      "first_chunk_index": 557938,
+      "nll": 2.1478057581131567,
+      "num_tokens": 15357
+    },
+    {
+      "batch": 37,
+      "first_chunk_index": 1072776,
+      "nll": 2.164099541376943,
+      "num_tokens": 15568
+    },
+    {
+      "batch": 38,
+      "first_chunk_index": 1078903,
+      "nll": 2.012150228783667,
+      "num_tokens": 15761
+    },
+    {
+      "batch": 39,
+      "first_chunk_index": 897602,
+      "nll": 2.180268329774322,
+      "num_tokens": 15783
+    },
+    {
+      "batch": 40,
+      "first_chunk_index": 860469,
+      "nll": 2.191029035841463,
+      "num_tokens": 16042
+    },
+    {
+      "batch": 41,
+      "first_chunk_index": 273758,
+      "nll": 2.0451076916643967,
+      "num_tokens": 15601
+    },
+    {
+      "batch": 42,
+      "first_chunk_index": 1107036,
+      "nll": 2.027312358031937,
+      "num_tokens": 15601
+    },
+    {
+      "batch": 43,
+      "first_chunk_index": 928644,
+      "nll": 2.056669187673811,
+      "num_tokens": 15642
+    },
+    {
+      "batch": 44,
+      "first_chunk_index": 71163,
+      "nll": 2.086145277902149,
+      "num_tokens": 15355
+    },
+    {
+      "batch": 45,
+      "first_chunk_index": 453216,
+      "nll": 2.1234044929320204,
+      "num_tokens": 15740
+    },
+    {
+      "batch": 46,
+      "first_chunk_index": 702930,
+      "nll": 1.9338154279306412,
+      "num_tokens": 15564
+    },
+    {
+      "batch": 47,
+      "first_chunk_index": 338967,
+      "nll": 2.2655279610888557,
+      "num_tokens": 15898
+    },
+    {
+      "batch": 48,
+      "first_chunk_index": 424937,
+      "nll": 2.0221883265858898,
+      "num_tokens": 16233
+    },
+    {
+      "batch": 49,
+      "first_chunk_index": 34368,
+      "nll": 2.183047506195848,
+      "num_tokens": 15812
+    }
+  ],
+  "sampled_chunk_indices": [
+    413114,
+    563208,
+    497578,
+    100425,
+    101000,
+    395337,
+    572292,
+    729815,
+    260893,
+    672290,
+    630505,
+    1023387,
+    619648,
+    877559,
+    863017,
+    432102,
+    870245,
+    781162,
+    874227,
+    253394,
+    957402,
+    922898,
+    85133,
+    805607,
+    38690,
+    184248,
+    185371,
+    1087899,
+    617353,
+    102741,
+    387534,
+    455597,
+    211287,
+    876530,
+    511775,
+    482844,
+    738187,
+    1009797,
+    990091,
+    313805,
+    363339,
+    186214,
+    563845,
+    954262,
+    140831,
+    75738,
+    780905,
+    888619,
+    516245,
+    65020,
+    266286,
+    485337,
+    336264,
+    777070,
+    308410,
+    740864,
+    897443,
+    155847,
+    677184,
+    523620,
+    828960,
+    820425,
+    515107,
+    928565,
+    321533,
+    118374,
+    48846,
+    413474,
+    155900,
+    707838,
+    704375,
+    348338,
+    1110890,
+    530480,
+    554649,
+    765523,
+    456338,
+    995936,
+    224654,
+    717972,
+    408855,
+    368217,
+    487032,
+    830508,
+    609494,
+    372815,
+    239307,
+    490253,
+    97753,
+    623630,
+    105015,
+    222932,
+    634252,
+    608208,
+    484361,
+    309041,
+    108423,
+    99521,
+    907825,
+    957087,
+    640794,
+    378013,
+    1082441,
+    786387,
+    555100,
+    327423,
+    799698,
+    8210,
+    494451,
+    856268,
+    179858,
+    953581,
+    458154,
+    936394,
+    741427,
+    1070312,
+    466122,
+    746943,
+    525364,
+    618420,
+    587067,
+    777620,
+    951729,
+    172052,
+    1028740,
+    405800,
+    745398,
+    502221,
+    729895,
+    308617,
+    253037,
+    1048584,
+    496994,
+    761689,
+    25329,
+    886491,
+    358231,
+    845353,
+    1033431,
+    870655,
+    179192,
+    871522,
+    621218,
+    761097,
+    557938,
+    267147,
+    755961,
+    917460,
+    1072776,
+    448731,
+    95836,
+    127722,
+    1078903,
+    41554,
+    848735,
+    131608,
+    897602,
+    776574,
+    938624,
+    558790,
+    860469,
+    552749,
+    887296,
+    525882,
+    273758,
+    1004418,
+    88320,
+    489382,
+    1107036,
+    629502,
+    502308,
+    1001516,
+    928644,
+    1095961,
+    520452,
+    853125,
+    71163,
+    630349,
+    169866,
+    203560,
+    453216,
+    487491,
+    142858,
+    800048,
+    702930,
+    382080,
+    702285,
+    762505,
+    338967,
+    867991,
+    403516,
+    847380,
+    424937,
+    916347,
+    217046,
+    928103,
+    34368,
+    710097,
+    1046163,
+    144881
+  ]
+}

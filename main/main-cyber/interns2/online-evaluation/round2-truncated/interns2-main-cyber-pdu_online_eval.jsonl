@@ -1,0 +1,3 @@
+{"run": "interns2-main-cyber-pdu", "step": 23, "unix_time": 1790760522.4204679, "wmdp_cyber": 0.467035732259688, "mmlu": 0.8551378446115289}
+{"run": "interns2-main-cyber-pdu", "step": 46, "unix_time": 1790761106.0594194, "wmdp_cyber": 0.361852038248616, "mmlu": 0.8606516290726817}
+{"run": "interns2-main-cyber-pdu", "step": 69, "unix_time": 1790761684.5132136, "wmdp_cyber": 0.28384499245093103, "mmlu": 0.8541353383458646}

@@ -1,60 +1,27 @@
-# 维护中的脚本
+# 脚本
 
-公开入口只有以下几类：
+仓库的全部入口都在这里，按使用顺序排列。所有脚本从仓库根目录运行，默认使用
+`envs/open-unlearning` 中的 Python（可用 `OU_PYTHON` 覆盖）。完整流程见 [RUNBOOK](../RUNBOOK.md)。
 
-- `train_deepspeed.sh`：DeepSpeed/Accelerate 后端。
-- `train_megatron.sh`：Megatron/MCore 后端。
-- `submit_rjob_example.sh`：唯一 RJob 提交模板，通过 `BACKEND` 选择后端。
-- `run_megatron_train_eval_group.sh`：在一个 RJob 内串行执行多算法 train→eval。
-- `inspect.sh`：解析配置和校验路径。
-- `build_cache.sh`：构建 document-chunk cache。
-- `build_xtuner_pack_cache.sh`：从单个纯文本 CPT 数据集构建固定顺序的
-  `xtuner_softpack_v1` cache。
-- `lm_eval_accelerate.sh`：统一的 lm-eval 评测入口。
+| 步骤 | 脚本 | 用法 |
+| --- | --- | --- |
+| 1. 构造 data cache | `build_xtuner_cache_example.sh` | 示例：按一份 XTuner 配置构建 cache |
+| | `build_document_chunk_cache_example.sh` | 示例：按一份 document chunk 参数构建 cache |
+| 2. 检查配置 | `inspect.sh` | `scripts/inspect.sh --config CONFIG [--backend megatron --check-paths]` |
+| 3. 训练 | `train_megatron.sh` | `scripts/train_megatron.sh CONFIG [--dry-run]` |
+| | `train_deepspeed.sh` | `scripts/train_deepspeed.sh CONFIG [--dry-run]` |
+| 4. 提交 RJob | `submit_rjob_example.sh` | `CLUSTER=safethm scripts/submit_rjob_example.sh CONFIG [CONFIG...]` |
+| 5. 离线评测 | `eval.sh` | `scripts/eval.sh MODEL_DIR TASKS OUTPUT_DIR` |
 
-cache builder 的实现位于 `src/data/build_document_chunk_cache.py`，不作为独立脚本
-暴露。旧算法、RJob 和 Megatron roundtrip 源文件已经删除；对应历史日志也已按要求清理。
+## 说明
 
-XTuner packed-cache builder 的实现位于
-`src/data/build_xtuner_packed_cache.py`。先复制
-`configs/data_processing/xtuner_softpack_template.yaml`，再运行：
-
-```bash
-scripts/build_xtuner_pack_cache.sh --config /path/to/cache-build.yaml
-```
-
-`submit_rjob_example.sh` 会把位置参数继续传给统一 CLI。正式训练直接传完整 YAML，
-训练周期、LR 调度、保存策略和输出子目录都由 YAML 定义：
-
-```bash
-BACKEND=megatron \
-CONFIG=configs/training/megatron/interns2/pure_npo.yaml \
-JOB_NAME=interns2-pure-npo \
-scripts/submit_rjob_example.sh
-```
-
-Megatron 输出目录由 `backends.megatron.output_root/training.output_name` 组成。
-
-多配置流水线不会覆盖训练参数；每个训练配置完成后评测它的
-`checkpoint-epoch-1/`，然后才训练下一个算法。
-参数直接传完整训练 YAML，不再传算法组件名：
-
-```bash
-SWEEP_NAME=interns2-all-algorithms-v1 WORKFLOW=train-eval-group \
-BACKEND=megatron JOB_NAME=ou-interns2-group1 \
-scripts/submit_rjob_example.sh \
-  configs/training/megatron/interns2/pure_npo.yaml \
-  configs/training/megatron/interns2/grad_diff.yaml \
-  configs/training/megatron/interns2/wga.yaml
-
-SWEEP_NAME=interns2-all-algorithms-v1 WORKFLOW=train-eval-group \
-BACKEND=megatron JOB_NAME=ou-interns2-group2 \
-scripts/submit_rjob_example.sh \
-  configs/training/megatron/interns2/satimp.yaml \
-  configs/training/megatron/interns2/rmu.yaml \
-  configs/training/megatron/interns2/undial.yaml
-```
-
-默认评测任务是 `wmdp,mmlu`，可通过 `EVAL_TASKS` 覆盖。单个算法训练失败时，
-runner 会跳过该算法的评测并继续下一个；单个 checkpoint 评测失败也不会阻止后续任务，
-但整个 RJob 最终会以非零状态汇总失败。
+- **构造 data cache**：两个示例直接调用 builder 模块（`src/data/build_xtuner_packed_cache.py`、
+  `src/data/build_document_chunk_cache.py`）。构建其他 cache 时修改脚本中的配置路径或参数，
+  参数来源见 `configs/data_processing/`。
+- **训练**：GPU 数取自配置的 `world_size`，在当前节点用 torchrun 启动；`--dry-run` 只打印最终参数。
+  训练中的 WMDP / MMLU 在线评测由配置控制，不需要额外脚本。
+- **提交 RJob**：后端、GPU 数和任务名都从配置读取，`CLUSTER` 选择资源组（safer2ai、safethm、
+  safewt）。传入多份配置时在同一个 RJob 中依次训练，某一份失败不影响后续；日志在
+  `outputs/rjob_logs/<任务名>_<时间>/`。`DRY_RUN=1` 只打印 rjob 命令。
+- **离线评测**：用 lm-eval 评测一个 HF checkpoint，结果写入 `OUTPUT_DIR/result.json`。
+  `OUTPUT_DIR` 每次会被清空重建，因此必须位于 `evaluations/` 下且以 `lm_eval_results_` 开头。

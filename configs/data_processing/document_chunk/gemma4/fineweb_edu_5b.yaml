@@ -1,0 +1,38 @@
+# document_chunk_v1 cache of FineWeb-Edu 5B (same 92-shard source as the XTuner caches) for Gemma4.
+# (The other data-processing method is XTuner soft-pack, see ../../xtuner/.)
+#
+# Each document is tokenized on its own and split into max_length windows;
+# chunks never span two documents. This builder is driven by CLI flags rather
+# than YAML: every key below maps 1:1 to a flag of src/data/build_document_chunk_cache.py.
+#
+# Gemma4 chunks start with <bos>, which takes one of the 1024 slots, so stride
+# is 1023 (= content tokens per chunk) to keep consecutive chunks contiguous.
+# The *_stride1024 Gemma4 caches were built by the old builder without BOS;
+# this config writes to new *_stride1023_bos directories instead.
+#
+#   PYTHONPATH=src envs/open-unlearning/bin/python -m data.build_document_chunk_cache \
+#     --model-path /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/internal/checkpoints/gemma-26b-a4b \
+#     --data-files '/mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/data/fineweb-edu-5b-shuffle/*.parquet' \
+#     --dataset-path parquet \
+#     --text-key text \
+#     --max-length 1024 \
+#     --stride 1023 \
+#     --min-length 1 \
+#     --workers 16 \
+#     --tokenize-batch-size 512 \
+#     --output-dir /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/data_cache/gemma4/gemma4_fineweb_edu_5b_max1024_stride1023_bos
+#
+# Pass --drop-last or --no-add-special-tokens only when the matching key below is changed.
+
+model_path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/internal/checkpoints/gemma-26b-a4b
+data_files: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/data/fineweb-edu-5b-shuffle/*.parquet
+dataset_path: parquet
+text_key: text
+max_length: 1024
+stride: 1023
+min_length: 1
+drop_last: false
+add_special_tokens: true
+workers: 16
+tokenize_batch_size: 512
+output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/data_cache/gemma4/gemma4_fineweb_edu_5b_max1024_stride1023_bos

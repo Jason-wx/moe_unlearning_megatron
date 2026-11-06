@@ -1,0 +1,4 @@
+{"run": "interns2-main-cyber-rmu", "step": 23, "unix_time": 1790760586.9057755, "wmdp_cyber": 0.587317564167086, "mmlu": 0.869172932330827}
+{"run": "interns2-main-cyber-rmu", "step": 46, "unix_time": 1790760891.6093252, "wmdp_cyber": 0.3809763462506291, "mmlu": 0.8671679197994987}
+{"run": "interns2-main-cyber-rmu", "step": 69, "unix_time": 1790761192.9964767, "wmdp_cyber": 0.3125314544539507, "mmlu": 0.8616541353383459}
+{"run": "interns2-main-cyber-rmu", "step": 92, "unix_time": 1790761494.7846813, "wmdp_cyber": 0.28485153497735277, "mmlu": 0.856140350877193}

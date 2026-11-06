@@ -1,0 +1,90 @@
+# Intern-S2 main PureNPO configuration.
+# Main-scale setting: gbs 32 / mbs 4 / lr 5e-5 / 3 epochs = 2142 optimizer
+# steps on the TP1/PP1/EP8 layout; cosine decays to 0; final checkpoint
+# auto-saved.
+# lr 5e-5 (decaying cosine) taken from the V-final main-comparison run behind
+# online-evaluation/interns2-V-final-pure-npo_online_eval.jsonl
+# (gbs32/mbs1/1ep=714 steps, final 77.5 bio / 84.0 mmlu).
+name: interns2-main-pure-npo
+model:
+  name: interns2
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/intern/Intern-S2-base05
+  num_experts: 256
+  trust_remote_code: true
+data:
+  name: wmdp_bio
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/interns2_wmdp_bio_softpack4096/forget
+  retain_cache: ${OU_CACHE_ROOT}/Xtuner/fineweb_edu_5b_interns2_softpack4096_seed42
+  sequence_length: 4096
+  pad_token_id: 248044
+  shuffle: false
+algorithm:
+  name: pure_npo
+  beta: 0.1
+  gamma: 1.0
+  alpha: 1.0
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 3
+  learning_rate: 5.0e-05
+  weight_decay: 0.0
+  # Cosine decays from 5e-5 to 0 over the full 2142 steps, matching the
+  # V-final main-comparison PureNPO schedule (the archived gbs8 run instead
+  # held lr constant after warmup, min_lr == lr).
+  min_learning_rate: 0
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: interns2-main-pure-npo
+  save_steps: []
+  save_interval_steps: 0
+  save_final_checkpoint: true
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main
+    micro_batch_size: 1
+# mbs is 1 (not 4): Megatron vocab_parallel_cross_entropy materializes
+# full fp32 logits (~30.7 GiB at mbs 4) on top of ~128 GiB static (frozen
+# reference resident) — OOM at step 2, verified 2026-09-24 twice. gbs stays
+# 32; optimization math unchanged.
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      activation_recompute: full
+      use_distributed_optimizer: true
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_bio, mmlu]
+      num_fewshot: 0
+      # WMDP-Bio remains full-size; MMLU uses 35 questions per leaf subtask.
+      task_limits: {mmlu: 35}
+      # PureNPO keeps a frozen reference resident: the step-1 eval forward
+      # OOMs at batch_size=64 (~30.7 GiB full-vocab eval logits on top of
+      # ~128 GiB static; same as the V4 precedent). 16 is the fallback this
+      # file always planned for; training mbs stays 4.
+      batch_size: 16
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/interns2/online-evaluation
+      steps: [1, 300, 700, 1000, 1400, 1700, 1800, 1900, 2000, 2100, 2142]

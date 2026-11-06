@@ -17,16 +17,36 @@ from .trainable_parameters import normalize_trainable_param_mode
 _BACKENDS = {"deepspeed", "megatron"}
 _SUPPORTED_ALGORITHMS = {
     "deepspeed": {
-        "grad_ascent", "grad_diff", "npo", "pure_npo", "token_npo", "simnpo",
-        "token_simnpo", "wga", "satimp", "ceu", "pdu", "undial",
+        "grad_ascent",
+        "grad_diff",
+        "npo",
+        "pure_npo",
+        "token_npo",
+        "simnpo",
+        "token_simnpo",
+        "wga",
+        "satimp",
+        "ceu",
+        "pdu",
+        "undial",
     },
     "megatron": {
-        "grad_ascent", "grad_diff", "npo", "pure_npo", "token_npo", "simnpo",
-        "token_simnpo", "wga", "satimp",
-        "ceu", "pdu", "undial", "rmu",
+        "grad_ascent",
+        "grad_diff",
+        "npo",
+        "pure_npo",
+        "token_npo",
+        "simnpo",
+        "token_simnpo",
+        "wga",
+        "satimp",
+        "ceu",
+        "pdu",
+        "undial",
+        "rmu",
     },
 }
-_RETAIN_ALGORITHMS = {"grad_diff", "simnpo", "token_simnpo", "pdu", "rmu"}
+_RETAIN_ALGORITHMS = {"grad_diff", "pdu", "rmu"}
 _ALIASES = {
     "token_pure_npo": "token_npo",
 }
@@ -100,7 +120,8 @@ class ExperimentConfig:
         if self.algorithm_name in _RETAIN_ALGORITHMS:
             return True
         return (
-            self.algorithm_name in {"wga", "satimp", "undial"}
+            self.algorithm_name
+            in {"wga", "satimp", "undial", "simnpo", "token_simnpo", "pure_npo", "npo"}
             and float(self.payload["algorithm"].get("alpha", 0.0)) != 0.0
         )
 
@@ -111,18 +132,39 @@ class ExperimentConfig:
             raise ValueError(f"experiment is missing sections: {missing}")
         required_fields = {
             "model": (
-                "name", "path", "num_experts", "trust_remote_code",
+                "name",
+                "path",
+                "num_experts",
+                "trust_remote_code",
             ),
             "data": (
-                "name", "forget_cache", "retain_cache", "sequence_length", "pad_token_id",
+                "name",
+                "forget_cache",
+                "retain_cache",
+                "sequence_length",
+                "pad_token_id",
                 "shuffle",
             ),
             "algorithm": ("name",),
             "training": (
-                "global_batch_size", "train_steps", "num_train_epochs", "learning_rate",
-                "weight_decay", "min_learning_rate", "adam_beta1", "adam_beta2", "adam_eps",
-                "gradient_clip", "seed", "bf16", "trainable_param_mode", "save_steps",
-                "save_every_epoch", "save_final_checkpoint", "wandb_mode", "wandb_project",
+                "global_batch_size",
+                "train_steps",
+                "num_train_epochs",
+                "learning_rate",
+                "weight_decay",
+                "min_learning_rate",
+                "adam_beta1",
+                "adam_beta2",
+                "adam_eps",
+                "gradient_clip",
+                "seed",
+                "bf16",
+                "trainable_param_mode",
+                "save_steps",
+                "save_every_epoch",
+                "save_final_checkpoint",
+                "wandb_mode",
+                "wandb_project",
                 "wandb_dir",
             ),
         }
@@ -150,11 +192,24 @@ class ExperimentConfig:
                 if absent:
                     raise ValueError(f"{section} is missing DeepSpeed fields: {absent}")
             for field in (
-                "enabled", "world_size", "micro_batch_size", "optimizer",
-                "gradient_checkpointing", "do_train", "do_eval", "remove_unused_columns",
-                "save_only_model", "report_to", "ddp_find_unused_parameters",
-                "dataloader_drop_last", "per_device_eval_batch_size", "warmup_steps",
-                "lr_scheduler_type", "logging_steps", "launcher", "deepspeed_config",
+                "enabled",
+                "world_size",
+                "micro_batch_size",
+                "optimizer",
+                "gradient_checkpointing",
+                "do_train",
+                "do_eval",
+                "remove_unused_columns",
+                "save_only_model",
+                "report_to",
+                "ddp_find_unused_parameters",
+                "dataloader_drop_last",
+                "per_device_eval_batch_size",
+                "warmup_steps",
+                "lr_scheduler_type",
+                "logging_steps",
+                "launcher",
+                "deepspeed_config",
             ):
                 if field not in deepspeed:
                     raise ValueError(f"backends.deepspeed.{field} must be explicit")
@@ -166,12 +221,9 @@ class ExperimentConfig:
                     "training.gradient_clip and "
                     "backends.deepspeed.deepspeed_config.gradient_clipping must match"
                 )
-            if bool(deepspeed_runtime["bf16"]["enabled"]) != bool(
-                self.payload["training"]["bf16"]
-            ):
+            if bool(deepspeed_runtime["bf16"]["enabled"]) != bool(self.payload["training"]["bf16"]):
                 raise ValueError(
-                    "training.bf16 and "
-                    "backends.deepspeed.deepspeed_config.bf16.enabled must match"
+                    "training.bf16 and backends.deepspeed.deepspeed_config.bf16.enabled must match"
                 )
         else:
             output_name = str(self.payload["training"].get("output_name", ""))
@@ -184,7 +236,10 @@ class ExperimentConfig:
                     "training.output_name must be a safe single directory name for Megatron"
                 )
             for field in (
-                "lr_scheduler_type", "lr_warmup_ratio", "lr_warmup_init", "lr_decay_steps",
+                "lr_scheduler_type",
+                "lr_warmup_ratio",
+                "lr_warmup_init",
+                "lr_decay_steps",
             ):
                 if field not in self.payload["training"]:
                     raise ValueError(f"training.{field} must be explicit for Megatron")
@@ -195,6 +250,10 @@ class ExperimentConfig:
         for field in ("global_batch_size", "num_train_epochs"):
             if int(self.payload["training"].get(field, 0)) <= 0:
                 raise ValueError(f"training.{field} must be positive")
+        # Periodic saving is an optional extension; legacy configs default to disabled.
+        save_interval_steps = int(self.payload["training"].get("save_interval_steps", 0))
+        if save_interval_steps < 0:
+            raise ValueError("training.save_interval_steps must be nonnegative")
         normalize_trainable_param_mode(self.payload["training"]["trainable_param_mode"])
         algorithm = self.algorithm_name
         retain_cache = self.payload["data"].get("retain_cache")
@@ -254,9 +313,7 @@ def load_experiment(
     path = Path(path).resolve()
     payload = _read_yaml(path)
     if "defaults" in payload:
-        raise ValueError(
-            "training configs must be self-contained; remove the 'defaults' section"
-        )
+        raise ValueError("training configs must be self-contained; remove the 'defaults' section")
     merged = payload
     if overrides:
         merged = _deep_merge(merged, overrides)

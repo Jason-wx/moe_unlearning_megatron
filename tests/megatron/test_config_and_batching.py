@@ -167,6 +167,11 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "positive"):
             from_mapping(mapping).validate(check_paths=False)
 
+        mapping["training"]["save_steps"] = []
+        mapping["training"]["save_interval_steps"] = -1
+        with self.assertRaisesRegex(ValueError, "save_interval_steps"):
+            from_mapping(mapping).validate(check_paths=False)
+
     def test_megatron_wandb_is_forced_offline(self):
         config = from_mapping(self._mapping())
         self.assertEqual(config.training.wandb_mode, "offline")
@@ -183,7 +188,7 @@ class ConfigTest(unittest.TestCase):
 
     def test_token_npo_train_eval_config(self):
         shared = load_experiment(
-            "configs/training/megatron/interns2/token_npo.yaml"
+            Path(__file__).resolve().parents[1] / "fixtures/megatron/interns2/token_npo.yaml"
         )
         config = from_mapping(to_megatron_mapping(shared))
         self.assertEqual(config.optimizer.learning_rate, 1.0e-6)
@@ -220,16 +225,45 @@ class ConfigTest(unittest.TestCase):
         config.validate(check_paths=False)
 
     def test_all_five_npo_family_names_are_distinct(self):
-        for name in ("npo", "pure_npo", "token_npo"):
+        for name in ("npo", "token_npo"):
             mapping = self._mapping()
             mapping["algorithm"] = {"name": name, "beta": 0.1}
             config = from_mapping(mapping)
             self.assertFalse(algorithm_uses_retain(config.algorithm))
             config.validate(check_paths=False)
+
+        # PureNPO is alpha-gated: alpha=0 keeps the published forget-only mode,
+        # while nonzero alpha enables the retain-NLL anchor.
+        mapping = self._mapping()
+        mapping["algorithm"] = {"name": "pure_npo", "beta": 0.1, "alpha": 0.0}
+        config = from_mapping(mapping)
+        self.assertFalse(algorithm_uses_retain(config.algorithm))
+        config.validate(check_paths=False)
+
+        mapping["algorithm"]["alpha"] = 0.5
+        config = from_mapping(mapping)
+        self.assertTrue(algorithm_uses_retain(config.algorithm))
+        with self.assertRaisesRegex(ValueError, "retain_cache"):
+            config.validate(check_paths=False)
+        mapping["data"]["retain_cache"] = "/retain"
+        config = from_mapping(mapping)
+        self.assertTrue(algorithm_uses_retain(config.algorithm))
+        config.validate(check_paths=False)
+
         for name in ("simnpo", "token_simnpo"):
             mapping = self._mapping()
+            mapping["algorithm"] = {"name": name, "beta": 0.1, "alpha": 0.0}
+            config = from_mapping(mapping)
+            self.assertFalse(algorithm_uses_retain(config.algorithm))
+            config.validate(check_paths=False)
+
+            mapping["algorithm"]["alpha"] = 0.1
+            config = from_mapping(mapping)
+            self.assertTrue(algorithm_uses_retain(config.algorithm))
+            with self.assertRaisesRegex(ValueError, "retain_cache"):
+                config.validate(check_paths=False)
+
             mapping["data"]["retain_cache"] = "/retain"
-            mapping["algorithm"] = {"name": name, "beta": 0.1, "alpha": 0.1}
             config = from_mapping(mapping)
             self.assertTrue(algorithm_uses_retain(config.algorithm))
             config.validate(check_paths=False)
@@ -280,6 +314,19 @@ class ConfigTest(unittest.TestCase):
 
         mapping["algorithm"]["train_layers"] = [7, 10]
         with self.assertRaisesRegex(ValueError, "after target_layer"):
+            from_mapping(mapping).validate(check_paths=False)
+
+    def test_rmu_rejects_full_activation_recompute(self):
+        mapping = self._mapping()
+        mapping["data"]["retain_cache"] = "/retain"
+        mapping["training"]["trainable_param_mode"] = "full"
+        mapping["algorithm"] = {
+            "name": "rmu",
+            "target_layer": 9,
+            "train_layers": [7, 8, 9],
+        }
+        mapping["parallel"]["activation_recompute"] = "full"
+        with self.assertRaisesRegex(ValueError, "RMU.*full activation recomputation"):
             from_mapping(mapping).validate(check_paths=False)
 
     def test_yaml_inheritance_deep_merges_algorithm(self):
@@ -351,6 +398,28 @@ class BatchingTest(unittest.TestCase):
             gamma=1.0,
             alpha=0.0,
             beta=0.5,
+        )
+        self.assertTrue(torch.isfinite(loss))
+        self.assertNotIn("retain_loss", metrics)
+        self.assertNotIn("weighted_retain_loss", metrics)
+
+    def test_simnpo_alpha_zero_accepts_forget_only_batch(self):
+        batch = collate_role_batch(
+            [self._example([1, 2, 3])],
+            None,
+            pad_token_id=0,
+            sequence_length=4,
+        )
+        token_losses = torch.tensor([[2.0, 4.0, 0.0, 0.0]])
+        loss, metrics = reduce_role_losses(
+            token_losses,
+            batch["loss_mask"],
+            batch["roles"],
+            algorithm="simnpo",
+            gamma=1.0,
+            alpha=0.0,
+            beta=0.1,
+            delta=0.0,
         )
         self.assertTrue(torch.isfinite(loss))
         self.assertNotIn("retain_loss", metrics)
@@ -585,12 +654,131 @@ class ReferenceAlgorithmTest(unittest.TestCase):
             {
                 "model": {"path": "/model", "num_experts": 4},
                 "data": {"forget_cache": "/forget"},
-                "algorithm": {"name": "pure_npo", "beta": 0.1},
+                "algorithm": {"name": "pure_npo", "beta": 0.1, "alpha": 0.0},
             }
         ).algorithm
         loss, metrics = reduce_reference_outputs(current, reference, batch, config=config)
         self.assertTrue(torch.isfinite(loss))
         self.assertAlmostEqual(metrics["current_sequence_nll"].item(), 3.0)
+
+    def test_pure_npo_alpha_nonzero_adds_retain_nll(self):
+        current = torch.tensor([[2.0, 4.0], [3.0, 5.0]], requires_grad=True)
+        reference = torch.tensor([[1.0, 1.0]])
+        batch = {
+            "roles": torch.tensor([0, 1]),
+            "loss_mask": torch.tensor([[True, True], [True, True]]),
+            "labels": torch.tensor([[1, 2], [3, 4]]),
+        }
+        config = from_mapping(
+            {
+                "model": {"path": "/model", "num_experts": 4},
+                "data": {"forget_cache": "/forget", "retain_cache": "/retain"},
+                "algorithm": {"name": "pure_npo", "beta": 0.1, "alpha": 0.5},
+            }
+        ).algorithm
+        loss, metrics = reduce_reference_outputs(current, reference, batch, config=config)
+        # Forget row: mean NLL 3 vs reference 1 -> Delta=2, beta=0.1.
+        expected_forget = -20.0 * torch.log(torch.sigmoid(torch.tensor(0.2)))
+        self.assertAlmostEqual(metrics["retain_loss"].item(), 4.0)
+        self.assertAlmostEqual(metrics["weighted_retain_loss"].item(), 2.0)
+        self.assertAlmostEqual(loss.item(), expected_forget.item() + 2.0, places=5)
+        loss.backward()
+        self.assertTrue(torch.all(current.grad[0] < 0))
+        self.assertTrue(torch.all(current.grad[1] > 0))
+
+    def test_pure_npo_alpha_nonzero_requires_retain_rows(self):
+        current = torch.tensor([[2.0, 4.0]])
+        reference = torch.tensor([[1.0, 1.0]])
+        batch = {
+            "roles": torch.tensor([0]),
+            "loss_mask": torch.tensor([[True, True]]),
+            "labels": torch.tensor([[1, 2]]),
+        }
+        config = from_mapping(
+            {
+                "model": {"path": "/model", "num_experts": 4},
+                "data": {"forget_cache": "/forget", "retain_cache": "/retain"},
+                "algorithm": {"name": "pure_npo", "beta": 0.1, "alpha": 1.0},
+            }
+        ).algorithm
+        with self.assertRaisesRegex(ValueError, "retain rows"):
+            reduce_reference_outputs(current, reference, batch, config=config)
+
+    def test_npo_alpha_nonzero_adds_retain_nll_without_normalizing_forget(self):
+        # Plain NPO keeps its sum-based (length-dependent) forget objective while
+        # gaining the same alpha-weighted retain-NLL anchor PureNPO has.
+        current = torch.tensor([[2.0, 4.0], [3.0, 5.0]], requires_grad=True)
+        reference = torch.tensor([[1.0, 1.0]])
+        batch = {
+            "roles": torch.tensor([0, 1]),
+            "loss_mask": torch.tensor([[True, True], [True, True]]),
+            "labels": torch.tensor([[1, 2], [3, 4]]),
+        }
+        mapping = {
+            "model": {"path": "/model", "num_experts": 4},
+            "data": {"forget_cache": "/forget", "retain_cache": "/retain"},
+            "algorithm": {"name": "npo", "beta": 0.1, "alpha": 0.5},
+        }
+        run = from_mapping(mapping)
+        self.assertTrue(algorithm_uses_retain(run.algorithm))
+        run.validate(check_paths=False)
+        loss, metrics = reduce_reference_outputs(
+            current, reference, batch, config=run.algorithm
+        )
+        # Forget row: summed NLL 6 vs reference 2 -> Delta=4 (pure_npo would use
+        # the length mean and get Delta=2), beta=0.1.
+        expected_forget = -20.0 * torch.log(torch.sigmoid(torch.tensor(0.4)))
+        self.assertAlmostEqual(metrics["current_sequence_nll"].item(), 6.0)
+        self.assertAlmostEqual(metrics["retain_loss"].item(), 4.0)
+        self.assertAlmostEqual(metrics["weighted_retain_loss"].item(), 2.0)
+        self.assertAlmostEqual(loss.item(), expected_forget.item() + 2.0, places=5)
+        loss.backward()
+        self.assertTrue(torch.all(current.grad[0] < 0))
+        self.assertTrue(torch.all(current.grad[1] > 0))
+
+    def test_npo_alpha_nonzero_requires_retain_rows(self):
+        current = torch.tensor([[2.0, 4.0]])
+        reference = torch.tensor([[1.0, 1.0]])
+        batch = {
+            "roles": torch.tensor([0]),
+            "loss_mask": torch.tensor([[True, True]]),
+            "labels": torch.tensor([[1, 2]]),
+        }
+        config = from_mapping(
+            {
+                "model": {"path": "/model", "num_experts": 4},
+                "data": {"forget_cache": "/forget", "retain_cache": "/retain"},
+                "algorithm": {"name": "npo", "beta": 0.1, "alpha": 1.0},
+            }
+        ).algorithm
+        with self.assertRaisesRegex(ValueError, "retain rows"):
+            reduce_reference_outputs(current, reference, batch, config=config)
+
+    def test_npo_without_explicit_alpha_stays_forget_only(self):
+        # Pre-existing NPO configs omit `alpha` entirely; the default must keep
+        # them forget-only so they never demand a retain cache.
+        run = from_mapping(
+            {
+                "model": {"path": "/model", "num_experts": 4},
+                "data": {"forget_cache": "/forget"},
+                "algorithm": {"name": "npo", "beta": 1.0e-4, "gamma": 1.0},
+            }
+        )
+        self.assertEqual(run.algorithm.alpha, 0.0)
+        self.assertFalse(algorithm_uses_retain(run.algorithm))
+        run.validate(check_paths=False)
+        current = torch.tensor([[2.0, 4.0]], requires_grad=True)
+        _, metrics = reduce_reference_outputs(
+            current,
+            torch.tensor([[1.0, 1.0]]),
+            {
+                "roles": torch.tensor([0]),
+                "loss_mask": torch.tensor([[True, True]]),
+                "labels": torch.tensor([[1, 2]]),
+            },
+            config=run.algorithm,
+        )
+        self.assertNotIn("retain_loss", metrics)
 
     def test_token_npo_reduction_keeps_per_token_reference_differences(self):
         current = torch.tensor([[2.0, 10.0]], requires_grad=True)
@@ -741,6 +929,30 @@ class RMUHookTest(unittest.TestCase):
         self.assertGreater(activation.grad.abs().sum().item(), 0.0)
         self.assertFalse(state.reference_activations)
         self.assertIn("rmu_loss", state.latest_metrics)
+
+    def test_rmu_hooks_can_be_temporarily_disabled(self):
+        state = RMUHookState(
+            algorithm=from_mapping(
+                {
+                    "model": {"path": "/model", "num_experts": 4},
+                    "data": {"forget_cache": "/forget", "retain_cache": "/retain"},
+                    "algorithm": {"name": "rmu"},
+                }
+            ).algorithm,
+            sequence_parallel=False,
+            seed=42,
+        )
+        output = torch.ones(2, 3, 4)
+
+        with state.hooks_disabled():
+            self.assertIs(state.reference_hook(None, None, output), output)
+            self.assertIs(state.student_hook(None, None, output), output)
+
+        self.assertTrue(state._hooks_enabled)
+        with self.assertRaisesRegex(RuntimeError, "student batch was not registered"):
+            state.student_hook(None, None, output)
+        with self.assertRaises(RMUTargetLayerReached):
+            state.reference_hook(None, None, output)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,97 @@
+# Qwen3.5 main-cyber BASELINE eval-only config (added 2026-10-01 after the
+# eleven curve runs finished: the result table needs the unlearned qwen3p5-
+# 35b-a3b base row). Follows the gemma4 precedent
+# configs/training/megatron/gemma4/rmu_base_eval.yaml: train_steps=1 and
+# evaluate at step 1 - a single 1e-6 update is noise for accuracy, so the
+# scores read as the base model's (the same "step=1 = base" convention
+# Intern-S2 V-final and gemma4 used).
+# Differences vs rmu.yaml (the closest config this is copied from):
+#   * train_steps: 1 / num_train_epochs: 1 / lr 1e-6, min_lr 0  -- one no-op step
+#   * evaluation.steps: [1]      -- score right after that step (== base)
+#   * micro_batch_size: 1        -- widest headroom, run is eval-dominated
+#   * task_limits KEPT {mmlu: 35} -- deliberately the SAME subsample as the
+#     eleven curve runs so the base row is directly comparable to their table
+#     (gemma4 dropped the limit for a full read; here comparability wins).
+# Everything else (model, caches, algorithm section, parallel layout, eval
+# batch 32) is identical to rmu.yaml so the forward path is the one the line
+# used. Export nothing: save_steps [] / save_final false.
+name: qwen35-main-cyber-base-eval
+model:
+  name: qwen35
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/qwen/qwen3p5-35b-a3b
+  num_experts: 256
+  trust_remote_code: true
+data:
+  name: wmdp_cyber
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/qwen35_wmdp_cyber_softpack4096/forget
+  retain_cache: ${OU_CACHE_ROOT}/Xtuner/fineweb_edu_5b_qwen35_softpack4096_seed42
+  sequence_length: 4096
+  pad_token_id: 248044
+  shuffle: false
+algorithm:
+  name: rmu
+  gamma: 1.0
+  alpha: 63.4
+  target_layer: 9
+  train_layers: [7, 8, 9]
+  steering_coeff: 300.0
+  control_norm_mode: fixed
+  control_scale_coeff: 1.0
+training:
+  global_batch_size: 32
+  train_steps: 1
+  num_train_epochs: 1
+  learning_rate: 1.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 0.0
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: qwen35-main-cyber-base-eval
+  save_steps: []
+  save_interval_steps: 0
+  save_final_checkpoint: false
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main-cyber
+    micro_batch_size: 1
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      # RMU extracts and backprops from layer 9. Full-layer checkpointing runs
+      # that hook under no-grad and detaches the RMU loss; keep it disabled.
+      activation_recompute: null
+      use_distributed_optimizer: true
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_cyber, mmlu]
+      num_fewshot: 0
+      # Same subsample as the eleven curve runs: full wmdp_cyber (1987), MMLU
+      # 35 questions per leaf subtask.
+      task_limits: {mmlu: 35}
+      batch_size: 32
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/main-cyber/qwen35/online-evaluation
+      # Score once, right after the single (noise) training step.
+      steps: [1]

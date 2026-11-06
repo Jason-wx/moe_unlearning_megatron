@@ -1,0 +1,11 @@
+{"run": "gemma4-final-satimp-forgetonly-nocap", "step": 1, "unix_time": 1791030193.909327, "wmdp_bio": 0.7918303220738413, "mmlu": 0.7694235588972431}
+{"run": "gemma4-final-satimp-forgetonly-nocap", "step": 300, "unix_time": 1791031291.6817787, "wmdp_bio": 0.5137470542026709, "mmlu": 0.5669172932330827}
+{"run": "gemma4-final-satimp-forgetonly-nocap", "step": 700, "unix_time": 1791032720.1040394, "wmdp_bio": 0.5758051846032993, "mmlu": 0.5724310776942356}
+{"run": "gemma4-final-satimp-forgetonly-nocap", "step": 1000, "unix_time": 1791033823.4513266, "wmdp_bio": 0.5954438334642577, "mmlu": 0.5764411027568922}
+{"run": "gemma4-final-satimp-forgetonly-nocap", "step": 1400, "unix_time": 1791035254.3490067, "wmdp_bio": 0.600942655145326, "mmlu": 0.5704260651629073}
+{"run": "gemma4-final-satimp-forgetonly-nocap", "step": 1700, "unix_time": 1791036356.4267635, "wmdp_bio": 0.6025137470542027, "mmlu": 0.5779448621553884}
+{"run": "gemma4-final-satimp-forgetonly-nocap", "step": 1800, "unix_time": 1791036803.0251167, "wmdp_bio": 0.596229379418696, "mmlu": 0.5774436090225564}
+{"run": "gemma4-final-satimp-forgetonly-nocap", "step": 1900, "unix_time": 1791037249.166259, "wmdp_bio": 0.612725844461901, "mmlu": 0.5764411027568922}
+{"run": "gemma4-final-satimp-forgetonly-nocap", "step": 2000, "unix_time": 1791037694.6293857, "wmdp_bio": 0.598586017282011, "mmlu": 0.5854636591478697}
+{"run": "gemma4-final-satimp-forgetonly-nocap", "step": 2100, "unix_time": 1791038140.7084365, "wmdp_bio": 0.6182246661429693, "mmlu": 0.5739348370927319}
+{"run": "gemma4-final-satimp-forgetonly-nocap", "step": 2133, "unix_time": 1791038366.4333584, "wmdp_bio": 0.608012568735271, "mmlu": 0.5759398496240602}

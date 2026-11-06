@@ -2,11 +2,11 @@
 name: interns2-simnpo-wmdp-bio
 model:
   name: interns2
-  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/Intern-S2-base05
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/internal/checkpoints/intern/Intern-S2-base05
   handler: AutoModelForMultimodalLM
   num_experts: 256
   trust_remote_code: true
-  tokenizer_path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/Intern-S2-base05
+  tokenizer_path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/internal/checkpoints/intern/Intern-S2-base05
 data:
   name: wmdp_bio
   forget_cache: ${OU_CACHE_ROOT}/interns2/interns2_wmdp_bio_max1024_stride1024/forget

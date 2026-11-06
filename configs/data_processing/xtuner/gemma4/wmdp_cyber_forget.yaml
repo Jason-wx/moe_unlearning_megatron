@@ -1,0 +1,40 @@
+# BOS-anchored WMDP-Cyber forget cache for Gemma4. Source/seed mirror the
+# Qwen3.5 cyber config (same JSONL export, text_key=content, seed 43); every
+# 4096-token pack starts with <bos> (bos_per_pack=true), matching how Gemma4
+# is prompted at evaluation time.
+tokenizer:
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/internal/checkpoints/gemma-26b-a4b
+  trust_remote_code: true
+
+dataset:
+  # JSONL export is byte-identical (same order) to the parquet corpus and
+  # splits into byte-range partitions, so tokenize workers actually parallelize.
+  files: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/data/wmdp/cyber-forget-corpus-jsonl/train-00000-of-00001.jsonl
+  format: json
+  text_key: content
+  sample_ratio: 1.0
+  filter_empty: true
+  max_documents: null
+
+packing:
+  # The collaborator's harmful loader uses the global seed plus one.
+  seed: 43
+  pack_level: soft
+  pack_max_length: 4096
+  pack_to_max_length: true
+  pack_chunk_size: 10000
+  pack_workers: 4
+  pack_extra_buffer_size: 100
+  global_pack: false
+  add_eos_token: true
+  add_bos_token: false
+  bos_per_pack: true
+
+build:
+  tokenize_workers: 64
+  tokenize_batch_size: 1024
+  show_progress: true
+
+output:
+  directory: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/data_cache/Xtuner/gemma4_wmdp_cyber_softpack4096_bos/forget
+  overwrite: false

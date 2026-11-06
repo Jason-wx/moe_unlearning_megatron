@@ -49,6 +49,7 @@ def to_megatron_mapping(config: ExperimentConfig) -> dict:
         },
         "parallel": dict(backend["parallel"]),
         "reference": dict(backend.get("reference", {})),
+        "evaluation": dict(backend.get("evaluation", {})),
         "optimizer": {
             "learning_rate": float(training["learning_rate"]),
             "weight_decay": float(training["weight_decay"]),
@@ -70,6 +71,7 @@ def to_megatron_mapping(config: ExperimentConfig) -> dict:
             "save_every_epoch": bool(training["save_every_epoch"]),
             "save_final_checkpoint": bool(training["save_final_checkpoint"]),
             "save_steps": [int(step) for step in training["save_steps"]],
+            "save_interval_steps": int(training.get("save_interval_steps", 0)),
             "wandb_mode": str(training["wandb_mode"]),
             "wandb_project": str(training["wandb_project"]),
             "wandb_dir": str(training["wandb_dir"]),

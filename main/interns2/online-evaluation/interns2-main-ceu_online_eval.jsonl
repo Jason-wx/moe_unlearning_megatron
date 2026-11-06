@@ -1,0 +1,11 @@
+{"run": "interns2-main-ceu", "step": 1, "unix_time": 1790168343.598371, "wmdp_bio": 0.8397486252945797, "mmlu": 0.8656641604010025}
+{"run": "interns2-main-ceu", "step": 300, "unix_time": 1790171302.389717, "wmdp_bio": 0.7541241162608012, "mmlu": 0.825062656641604}
+{"run": "interns2-main-ceu", "step": 700, "unix_time": 1790175154.0237443, "wmdp_bio": 0.7336999214454045, "mmlu": 0.8095238095238095}
+{"run": "interns2-main-ceu", "step": 1000, "unix_time": 1790178056.734802, "wmdp_bio": 0.7069913589945012, "mmlu": 0.8015037593984963}
+{"run": "interns2-main-ceu", "step": 1400, "unix_time": 1790181856.6034272, "wmdp_bio": 0.6999214454045561, "mmlu": 0.7964912280701755}
+{"run": "interns2-main-ceu", "step": 1700, "unix_time": 1790184758.1693275, "wmdp_bio": 0.7007069913589945, "mmlu": 0.7949874686716792}
+{"run": "interns2-main-ceu", "step": 1800, "unix_time": 1790185831.0613344, "wmdp_bio": 0.6975648075412412, "mmlu": 0.7894736842105263}
+{"run": "interns2-main-ceu", "step": 1900, "unix_time": 1790186903.649989, "wmdp_bio": 0.6944226237234878, "mmlu": 0.7974937343358396}
+{"run": "interns2-main-ceu", "step": 2000, "unix_time": 1790187979.2104979, "wmdp_bio": 0.6975648075412412, "mmlu": 0.7934837092731829}
+{"run": "interns2-main-ceu", "step": 2100, "unix_time": 1790189057.6217794, "wmdp_bio": 0.6983503534956795, "mmlu": 0.7934837092731829}
+{"run": "interns2-main-ceu", "step": 2142, "unix_time": 1790189597.3981457, "wmdp_bio": 0.6975648075412412, "mmlu": 0.7914786967418547}

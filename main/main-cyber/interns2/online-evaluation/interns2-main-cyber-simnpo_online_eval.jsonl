@@ -1,0 +1,10 @@
+{"run": "interns2-main-cyber-simnpo", "step": 23, "unix_time": 1790775493.250018, "wmdp_cyber": 0.474584801207851, "mmlu": 0.844110275689223}
+{"run": "interns2-main-cyber-simnpo", "step": 46, "unix_time": 1790775955.2306082, "wmdp_cyber": 0.3905385002516356, "mmlu": 0.8526315789473684}
+{"run": "interns2-main-cyber-simnpo", "step": 69, "unix_time": 1790776419.8235974, "wmdp_cyber": 0.39607448414695523, "mmlu": 0.8551378446115289}
+{"run": "interns2-main-cyber-simnpo", "step": 92, "unix_time": 1790776880.4996598, "wmdp_cyber": 0.39557121288374436, "mmlu": 0.837593984962406}
+{"run": "interns2-main-cyber-simnpo", "step": 115, "unix_time": 1790777339.1116073, "wmdp_cyber": 0.41368897835933566, "mmlu": 0.8380952380952381}
+{"run": "interns2-main-cyber-simnpo", "step": 138, "unix_time": 1790777800.5942185, "wmdp_cyber": 0.4076497232008052, "mmlu": 0.825563909774436}
+{"run": "interns2-main-cyber-simnpo", "step": 161, "unix_time": 1790778262.6842363, "wmdp_cyber": 0.41066935078007044, "mmlu": 0.8225563909774436}
+{"run": "interns2-main-cyber-simnpo", "step": 184, "unix_time": 1790778723.5678136, "wmdp_cyber": 0.4126824358329139, "mmlu": 0.8275689223057644}
+{"run": "interns2-main-cyber-simnpo", "step": 207, "unix_time": 1790779183.4011698, "wmdp_cyber": 0.4141922496225465, "mmlu": 0.8300751879699249}
+{"run": "interns2-main-cyber-simnpo", "step": 230, "unix_time": 1790779645.1830983, "wmdp_cyber": 0.4151987921489683, "mmlu": 0.8270676691729323}

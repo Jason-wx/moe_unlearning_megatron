@@ -1,0 +1,107 @@
+# Intern-S2 main-cyber UNDIAL configuration (forget-only: retain_cache
+# null, alpha 0; beta 3.0).
+# Source note on selection: the bio summary table lists
+# interns2-main-undial-tp4-step2142, but that result was invalidated
+# (2026-09-29: undial_objective's log-Z term backpropagated only through
+# the local TP shard's target mass; label logits received ~23% of the
+# intended gradient). This config is migrated from the corrected rerun
+# main/interns2/undial_fixed.yaml instead (same algorithm/optimizer math,
+# TP1/PP1/EP8 layout) - the objective fix (chunked custom autograd) lives
+# in the codebase and applies here too.
+# Dataset switched to wmdp_cyber, everything else unchanged except the
+# training plan: 10 epochs on the 743-pack cyber forget corpus -> gbs 32
+# = 23 steps/epoch = 230 optimizer steps; online eval at every epoch end
+# [23, 46, ..., 230]; only the final checkpoint (step 230) is saved.
+# mbs 2 (not 4): UNDIAL needs full-vocab logits outside Megatron's fused
+# CE, and full-logit tensors with >= 2**31 elements corrupt memory (int32
+# indexing). Intern-S2: 4096 x 251392 = 1.03e9 per row, so mbs 4 = 4.12e9
+# (unsafe) and mbs 2 = 2.06e9 (safe). gbs stays 32 -> 16 microbatches per
+# step across 8 DP ranks.
+# UNDIAL hyperparams (beta 3, alpha 0) were NEVER tuned on bio (see
+# main/interns2/README.md warning section); treat weak-or-broken cyber
+# results as hyperparam mismatch first.
+# lr 1e-6 -> 5e-6 per the cyber-line decision (PureNPO and SimNPO keep 5e-5).
+# min_learning_rate 0 -> 1e-6 for all ten configs (cosine floor, 2026-09-30).
+name: interns2-main-cyber-undial-fixed
+model:
+  name: interns2
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/intern/Intern-S2-base05
+  num_experts: 256
+  trust_remote_code: true
+data:
+  name: wmdp_cyber
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/interns2_wmdp_cyber_softpack4096/forget
+  retain_cache: null
+  sequence_length: 4096
+  pad_token_id: 248044
+  shuffle: false
+algorithm:
+  name: undial
+  beta: 3.0
+  gamma: 1.0
+  alpha: 0.0
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 10
+  learning_rate: 5.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 1.0e-06
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: interns2-main-cyber-undial-fixed
+  save_steps: []
+  save_interval_steps: 0
+  save_final_checkpoint: true
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main-cyber
+    micro_batch_size: 2
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      # UNDIAL is a full-logit algorithm (no fused CE) and keeps a frozen
+      # reference resident; activation recomputation is required on this
+      # layout.
+      activation_recompute: full
+      use_distributed_optimizer: true
+    # UNDIAL is a reference algorithm: a frozen reference model IS built.
+    reference:
+      allocation: same_as_student
+      frozen: true
+      # Both microbatches of a step share one window (2 resident bf16
+      # teacher logit tensors, ~7.7 GiB).
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_cyber, mmlu]
+      num_fewshot: 0
+      # WMDP-Cyber remains full-size (1987 questions); MMLU uses 35 questions
+      # per leaf subtask.
+      task_limits: {mmlu: 35}
+      # Eval bs 16 (unchanged from bio): UNDIAL keeps a frozen reference
+      # resident; the step-1 eval forward OOMs at batch_size=64 (~136 GiB in
+      # use; bio-line evidence 2026-09-24). Static footprint is
+      # dataset-independent.
+      batch_size: 16
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/main-cyber/interns2/online-evaluation
+      steps: [23, 46, 69, 92, 115, 138, 161, 184, 207, 230]

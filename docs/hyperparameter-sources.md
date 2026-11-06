@@ -1,8 +1,14 @@
-# Intern-S2 超参数基线
+# 早期 Intern-S2 V3 配置的超参数来源
 
-当前 `configs/training/megatron/interns2/` 固定一版经验超参数。方法参数和 peak LR
+> 本页记录早期配置 `configs/training/megatron/interns2/*.yaml`（V3 统一基线）的参数来源，
+> 仅作历史参考；这些早期配置只保存在集群存储上，不包含在 Git 仓库中。
+> **最终实验的配置**在 `configs/training/megatron/final-training-configs/`，
+> 其 batch（global batch 32）、训练长度（bio 3 epochs、cyber 10 epochs）、warmup（5%）和部分算法的学习率
+> 均与本页不同，以各配置文件及其注释为准。
+
+`configs/training/megatron/interns2/` 固定一版经验超参数。方法参数和 peak LR
 优先采用已完成的 Intern-S2 实验；数据、batch、训练长度、可训练参数范围和 LR
-调度采用当前 v3 统一基线。
+调度采用 V3 统一基线。
 
 ## 已迁移的经验参数
 

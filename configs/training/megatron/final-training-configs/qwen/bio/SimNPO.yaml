@@ -1,0 +1,85 @@
+# Qwen3.5 main SimNPO configuration.
+# Copied from main/interns2/simnpo.yaml (algorithm hyperparams and training
+# plan unchanged): β0.1 / δ0 / α1 mirrored from the PureNPO working point,
+# lr 5e-5 (cosine decays to 0) / 3 epochs = 2142 optimizer steps on the
+# TP1/PP1/EP8 layout; final checkpoint auto-saved.
+# ⚠ Same caveat as the intern main line: this hyperparam set was never
+# tuned for SimNPO anywhere — weak forgetting here means "hyperparams not
+# adapted", not "algorithm ineffective".
+# mbs is 1 (not 4): same vocab_parallel CE full-logits OOM as pure_npo
+# (~30.7 GiB at mbs 4 on top of the frozen reference resident).
+name: qwen35-main-simnpo
+model:
+  name: qwen35
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/internal/checkpoints/qwen/qwen3p5-35b-a3b
+  num_experts: 256
+  trust_remote_code: true
+data:
+  name: wmdp_bio
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/qwen35_wmdp_bio_softpack4096/forget
+  retain_cache: ${OU_CACHE_ROOT}/Xtuner/fineweb_edu_5b_qwen35_softpack4096_seed42
+  sequence_length: 4096
+  pad_token_id: 248044
+  shuffle: false
+algorithm:
+  name: simnpo
+  beta: 0.1
+  delta: 0.0
+  gamma: 1.0
+  alpha: 1.0
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 3
+  learning_rate: 5.0e-05
+  weight_decay: 0.0
+  min_learning_rate: 0
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: qwen35-main-simnpo
+  save_steps: []
+  save_interval_steps: 0
+  save_final_checkpoint: true
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main
+    micro_batch_size: 1
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      activation_recompute: full
+      use_distributed_optimizer: true
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_bio, mmlu]
+      num_fewshot: 0
+      # WMDP-Bio remains full-size; MMLU uses 35 questions per leaf subtask.
+      task_limits: {mmlu: 35}
+      # SimNPO keeps a frozen reference resident: eval batch_size 16 is the
+      # Intern-S2-verified fallback for this static profile (64 OOM'd).
+      batch_size: 16
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/qwen35/online-evaluation
+      steps: [1, 300, 700, 1000, 1400, 1700, 1800, 1900, 2000, 2100, 2142]

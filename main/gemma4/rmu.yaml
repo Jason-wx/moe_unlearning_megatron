@@ -1,0 +1,93 @@
+# Gemma4 main RMU configuration — best-arm re-run with ckpt saving.
+# Copied from the gemma4 coeff-alpha sweep best arm
+# (configs/training/megatron/gemma4/coeff-alpha_sweep/
+# rmu_s1200_rf001_a4.45_softpack4096_l7-9_lr1e-6_3ep.yaml, online
+# 0.341/0.724, pending offline recheck): steer1200 / alpha4.45 (R:F=0.001
+# calibrated) / target9 / layers 7-9, lr 1e-6 / gbs 32 / 3 epochs = 2133
+# steps. The sweep arm ran with save_final_checkpoint=false, so this re-run
+# materializes the final ckpt for offline lm_eval (same pattern as the
+# qwen35 main-line rmu.yaml).
+# Deltas vs the sweep arm: save final ckpt; output_root -> main/ (shared
+# with interns2-main-*/qwen35-main-*); eval output -> main/gemma4;
+# model.path fixed for the sgtm checkpoints reorganization (gemma/
+# subdirectory); eval steps -> main-line grid.
+# mbs 4 / eval bs 64 / activation_recompute null are the gemma4-verified
+# RMU profile (the hook runs under no-grad; config validation rejects
+# full recompute for RMU).
+name: gemma4-main-rmu
+model:
+  name: gemma4
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/gemma/gemma-26b-a4b
+  num_experts: 128
+  trust_remote_code: true
+data:
+  name: wmdp_bio
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/gemma4_wmdp_bio_softpack4096/forget
+  retain_cache: ${OU_CACHE_ROOT}/Xtuner/fineweb_edu_5b_gemma4_softpack4096_seed42
+  sequence_length: 4096
+  pad_token_id: 0
+  shuffle: false
+algorithm:
+  name: rmu
+  gamma: 1.0
+  alpha: 4.45
+  target_layer: 9
+  train_layers: [7, 8, 9]
+  steering_coeff: 1200.0
+  control_norm_mode: fixed
+  control_scale_coeff: 1.0
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 3
+  learning_rate: 1.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 0.0
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: gemma4-main-rmu
+  save_steps: []
+  save_interval_steps: 0
+  save_final_checkpoint: true
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main
+    micro_batch_size: 4
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      activation_recompute: null
+      use_distributed_optimizer: true
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_bio, mmlu]
+      num_fewshot: 0
+      # WMDP-Bio remains full-size; MMLU uses 35 questions per leaf subtask.
+      task_limits: {mmlu: 35}
+      # Gemma4-sweep-verified RMU profile (no reference resident, mbs 4).
+      batch_size: 64
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/gemma4/online-evaluation
+      steps: [1, 300, 700, 1000, 1400, 1700, 1800, 1900, 2000, 2100, 2133]

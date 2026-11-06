@@ -31,7 +31,7 @@ PureNPO、TokenNPO 和 TokenSimNPO 是本仓库明确区分的目标函数变体
 - [TOFU](https://arxiv.org/abs/2401.06121)
 - [MUSE](https://arxiv.org/abs/2407.06460)
 
-当前正式 MoE 实验以 WMDP-Bio 和 MMLU 为主；TOFU/MUSE 代码属于上游兼容实现。
+最终 MoE 实验在 WMDP-Bio、WMDP-Cyber 上遗忘并用 MMLU 衡量通用能力；TOFU/MUSE 代码属于上游兼容实现。
 
 ## 延伸阅读
 

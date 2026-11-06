@@ -1,0 +1,10 @@
+{"run": "qwen35-main-cyber-pdu-eps2p51-ep2", "step": 23, "unix_time": 1791531721.0208921, "wmdp_cyber": 0.44841469552088575, "mmlu": 0.8100250626566416}
+{"run": "qwen35-main-cyber-pdu-eps2p51-ep2", "step": 46, "unix_time": 1791532555.4874084, "wmdp_cyber": 0.4116758933064922, "mmlu": 0.8290726817042606}
+{"run": "qwen35-main-cyber-pdu-eps2p51-ep2", "step": 69, "unix_time": 1791533103.1613348, "wmdp_cyber": 0.28535480624056364, "mmlu": 0.8215538847117795}
+{"run": "qwen35-main-cyber-pdu-eps2p51-ep2", "step": 92, "unix_time": 1791533650.1170888, "wmdp_cyber": 0.2637141419224962, "mmlu": 0.8155388471177945}
+{"run": "qwen35-main-cyber-pdu-eps2p51-ep2", "step": 115, "unix_time": 1791534196.9727585, "wmdp_cyber": 0.25012581781580273, "mmlu": 0.8110275689223058}
+{"run": "qwen35-main-cyber-pdu-eps2p51-ep2", "step": 138, "unix_time": 1791534741.9682353, "wmdp_cyber": 0.2536487166582788, "mmlu": 0.8035087719298246}
+{"run": "qwen35-main-cyber-pdu-eps2p51-ep2", "step": 161, "unix_time": 1791535286.5406704, "wmdp_cyber": 0.26270759939607446, "mmlu": 0.7959899749373434}
+{"run": "qwen35-main-cyber-pdu-eps2p51-ep2", "step": 184, "unix_time": 1791535831.1910734, "wmdp_cyber": 0.25968797181680925, "mmlu": 0.787468671679198}
+{"run": "qwen35-main-cyber-pdu-eps2p51-ep2", "step": 207, "unix_time": 1791536378.0554693, "wmdp_cyber": 0.2541519879214897, "mmlu": 0.7864661654135339}
+{"run": "qwen35-main-cyber-pdu-eps2p51-ep2", "step": 230, "unix_time": 1791536921.5884645, "wmdp_cyber": 0.25314544539506795, "mmlu": 0.7804511278195488}

@@ -1,0 +1,12 @@
+{"run": "interns2-main-simnpo-saveckpts", "step": 1, "unix_time": 1790235326.775972, "wmdp_bio": 0.8421052631578947, "mmlu": 0.8661654135338346}
+{"run": "interns2-main-simnpo-saveckpts", "step": 300, "unix_time": 1790238092.1173544, "wmdp_bio": 0.7831893165750197, "mmlu": 0.8315789473684211}
+{"run": "interns2-main-simnpo-saveckpts", "step": 700, "unix_time": 1790241100.9525077, "wmdp_bio": 0.7211311861743912, "mmlu": 0.7929824561403509}
+{"run": "interns2-main-simnpo-saveckpts", "step": 714, "unix_time": 1790241634.807277, "wmdp_bio": 0.7321288295365279, "mmlu": 0.8025062656641604}
+{"run": "interns2-main-simnpo-saveckpts", "step": 1000, "unix_time": 1790243844.985725, "wmdp_bio": 0.7274155538098979, "mmlu": 0.8095238095238095}
+{"run": "interns2-main-simnpo-saveckpts", "step": 1400, "unix_time": 1790246890.5971684, "wmdp_bio": 0.7446975648075412, "mmlu": 0.8030075187969925}
+{"run": "interns2-main-simnpo-saveckpts", "step": 1700, "unix_time": 1790249215.499984, "wmdp_bio": 0.7352710133542812, "mmlu": 0.7909774436090226}
+{"run": "interns2-main-simnpo-saveckpts", "step": 1800, "unix_time": 1790250083.9014633, "wmdp_bio": 0.7344854673998429, "mmlu": 0.7984962406015037}
+{"run": "interns2-main-simnpo-saveckpts", "step": 1900, "unix_time": 1790250954.154954, "wmdp_bio": 0.7407698350353495, "mmlu": 0.793984962406015}
+{"run": "interns2-main-simnpo-saveckpts", "step": 2000, "unix_time": 1790251826.459486, "wmdp_bio": 0.7439120188531029, "mmlu": 0.8025062656641604}
+{"run": "interns2-main-simnpo-saveckpts", "step": 2100, "unix_time": 1790252698.8259091, "wmdp_bio": 0.7470542026708562, "mmlu": 0.8010025062656642}
+{"run": "interns2-main-simnpo-saveckpts", "step": 2142, "unix_time": 1790253144.7983067, "wmdp_bio": 0.7446975648075412, "mmlu": 0.8020050125313283}

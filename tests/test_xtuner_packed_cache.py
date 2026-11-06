@@ -86,7 +86,9 @@ class XtunerSoftPackTest(unittest.TestCase):
             self.assertEqual(built, output_dir)
             dataset = CachedDocumentChunkDataset(output_dir)
             self.assertGreater(len(dataset), 0)
-            self.assertTrue(all(len(dataset[index]["input_ids"]) == 8 for index in range(len(dataset))))
+            self.assertTrue(
+                all(len(dataset[index]["input_ids"]) == 8 for index in range(len(dataset)))
+            )
 
     def test_local_soft_pack_order_is_seeded_and_assigns_every_document(self):
         lengths = np.asarray([3, 4, 2, 10, 3], dtype=np.int64)

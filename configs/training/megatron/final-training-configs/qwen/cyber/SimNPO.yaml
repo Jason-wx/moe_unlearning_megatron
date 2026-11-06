@@ -1,0 +1,101 @@
+# Qwen3.5 main-cyber simnpo configuration.
+# Auto-migrated from main/main-cyber/interns2/simnpo.yaml (R3 plan)
+# by main/main-cyber/qwen35/make_configs.py - model switched to
+# qwen3p5-35b-a3b (fields from the qwen35 bio main line), caches
+# switched to the qwen35 cyber forget pack (plus the qwen35 fineweb
+# retain pack where the source wires a retain stream).
+# Algorithm section and lr 5e-5 copied unchanged (identical between the
+# intern and qwen35 bio main lines; mbs 1, eval bs 16 verified on qwen35
+# bio).
+# R2 save point: ONE checkpoint at step 46 (epoch 2) - the margin-best
+# point of this run's R1 curve (margin = mmlu - wmdp_cyber, argmax,
+# earliest step wins ties). save_final_checkpoint stays false.
+# Schedule / mbs / eval batch_size copied unchanged from the intern-cyber
+# R3 config: the qwen35 cyber forget cache packs to the same 743 packs,
+# so 10 epochs = 230 steps and the per-epoch eval [23..230] carries over
+# 1:1. Save-plan history: R1 (2026-10-01 first submission) saved NO
+# checkpoints - a pure curve round; its curves then picked each run's
+# margin-best step, and this R2 edit (same day) sets save_steps to exactly
+# that one point. Final checkpoint stays OFF. Output names / online-eval
+# dir under main-cyber/qwen35; checkpoint output_root is shared with the
+# intern-cyber line (runs are name-distinct).
+name: qwen35-main-cyber-simnpo
+model:
+  name: qwen35
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/internal/checkpoints/qwen/qwen3p5-35b-a3b
+  num_experts: 256
+  trust_remote_code: true
+data:
+  name: wmdp_cyber
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/qwen35_wmdp_cyber_softpack4096/forget
+  retain_cache: ${OU_CACHE_ROOT}/Xtuner/fineweb_edu_5b_qwen35_softpack4096_seed42
+  sequence_length: 4096
+  pad_token_id: 248044
+  shuffle: false
+algorithm:
+  name: simnpo
+  beta: 0.1
+  delta: 0.0
+  gamma: 1.0
+  alpha: 1.0
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 10
+  learning_rate: 5.0e-05
+  weight_decay: 0.0
+  # Cosine decays from 5e-5 toward the 1e-6 floor over the full schedule,
+  # matching the pure_npo schedule.
+  min_learning_rate: 1.0e-06
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: qwen35-main-cyber-simnpo
+  save_steps: [46]
+  save_interval_steps: 0
+  save_final_checkpoint: false
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main-cyber
+    micro_batch_size: 1
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      activation_recompute: full
+      use_distributed_optimizer: true
+    # SimNPO is reference-free; this block is inert and kept for uniformity.
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_cyber, mmlu]
+      num_fewshot: 0
+      # WMDP-Cyber remains full-size (1987 questions); MMLU uses 35 questions
+      # per leaf subtask.
+      task_limits: {mmlu: 35}
+      # Eval bs 16 (unchanged from bio): step-1 eval forward at 64 OOMs
+      # (~30.7 GiB full-vocab eval logits + ~115 GiB static; bio-line
+      # evidence 2026-09-24). Static footprint is dataset-independent.
+      batch_size: 16
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/main-cyber/qwen35/online-evaluation
+      steps: [23, 46, 69, 92, 115, 138, 161, 184, 207, 230]

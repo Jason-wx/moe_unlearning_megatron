@@ -1,0 +1,103 @@
+# Gemma4 main-cyber grad_diff configuration (G1 curve round).
+# Auto-migrated from main/main-cyber/qwen35/grad_diff.yaml (R2 edition) by
+# main/main-cyber/gemma4/make_configs.py - training plan byte-copied
+# (cyber-line policy), model switched to gemma-26b-a4b-nocap and caches
+# to the BOS variants (the combo whose transfer the BOS ablation
+# confirmed on bio GD: 0.79 -> 0.578 by step 300 at lr 1e-6).
+# Algorithm section copied unchanged (identical across the intern/qwen
+# bio main lines; mbs 1 / eval bs 16 tier).
+# This family is the BOS ablation's positive control: gemma4 GD x BOS
+# x lr 1e-6 moved bio 0.79 -> 0.578 by step 300 where every no-BOS arm
+# stayed pinned at ~0.79 (main/gemma4/GA_family_nocap_rootcause_20261002.md
+# + 10-03 confirmation) - this run is that combo's first test on cyber.
+# lr 5e-6 is the cyber-line policy, 5x the ablation arm: watch the first
+# three eval points for MMLU collapse.
+# G1 round: NO checkpoints anywhere (save_steps [], save_final_checkpoint
+# false) - the online-eval curve is the only readout; save points, if
+# any, get picked from the curves in a later round (the qwen35-cyber
+# R1 -> R2 protocol).
+# Schedule / mbs / eval batch_size copied unchanged from the qwen35-cyber
+# config: the gemma4 cyber BOS forget cache packs to 748 packs (vs
+# intern/qwen 743), and with drop_last floor(748/32) = 23 steps per
+# epoch, so 10 epochs = 230 steps and the per-epoch eval [23..230]
+# carries over 1:1. Eval bs keeps the qwen35-cyber tiering (32; 16 for
+# the full-logit trio gd/pure_npo/simnpo): gemma4's A4B static footprint
+# on cyber-length prompts is unmeasured - on first-eval CUDA OOM halve
+# it (32 -> 16, 16 -> 8). Output names / online-eval dir under
+# main-cyber/gemma4; checkpoint output_root is shared with the intern/
+# qwen cyber lines (runs are name-distinct; G1 writes nothing there).
+name: gemma4-main-cyber-grad-diff
+model:
+  name: gemma4
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/gemma/gemma-26b-a4b-nocap
+  num_experts: 128
+  trust_remote_code: true
+data:
+  name: wmdp_cyber
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/gemma4_wmdp_cyber_softpack4096_bos/forget
+  retain_cache: ${OU_CACHE_ROOT}/Xtuner/fineweb_edu_5b_gemma4_softpack4096_bos_seed42
+  sequence_length: 4096
+  pad_token_id: 0
+  shuffle: false
+algorithm:
+  name: grad_diff
+  gamma: 1.0
+  alpha: 1.0
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 10
+  learning_rate: 5.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 1.0e-06
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: gemma4-main-cyber-grad-diff
+  save_steps: []
+  save_interval_steps: 0
+  save_final_checkpoint: false
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main-cyber
+    micro_batch_size: 1
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      activation_recompute: full
+      use_distributed_optimizer: true
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_cyber, mmlu]
+      num_fewshot: 0
+      # WMDP-Cyber remains full-size (1987 questions); MMLU uses 35 questions
+      # per leaf subtask.
+      task_limits: {mmlu: 35}
+      # Eval bs 16 (unchanged from bio): the step-1 eval forward at 64 OOMs
+      # (~30.7 GiB full-vocab eval logits + ~115 GiB static; bio-line
+      # evidence 2026-09-24). Static footprint is dataset-independent.
+      batch_size: 16
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/main-cyber/gemma4/online-evaluation
+      steps: [23, 46, 69, 92, 115, 138, 161, 184, 207, 230]

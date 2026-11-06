@@ -80,9 +80,7 @@ class TrainableParameterClassificationTest(unittest.TestCase):
                     expected,
                 )
         self.assertIsNone(
-            classify_hf_parameter(
-                "mtp.layers.0.mlp.experts.gate_up_proj", family=QWEN35_FAMILY
-            )
+            classify_hf_parameter("mtp.layers.0.mlp.experts.gate_up_proj", family=QWEN35_FAMILY)
         )
 
     def test_gemma_hf_mlp_is_shared_expert_and_router_scales_are_router(self):
@@ -123,15 +121,15 @@ class TrainableParameterClassificationTest(unittest.TestCase):
             ATTENTION,
         )
         self.assertIsNone(
-            classify_mcore_layer_parameter(
-                "mlp.linear_fc1.layer_norm_weight", family=GEMMA4_FAMILY
-            )
+            classify_mcore_layer_parameter("mlp.linear_fc1.layer_norm_weight", family=GEMMA4_FAMILY)
         )
 
     def test_qwen_hf_attention_mode_changes_only_attention_internals(self):
         model = QwenHFModel()
         configure_hf_trainable_parameters(model, ATTENTION)
-        trainable = {name for name, parameter in model.named_parameters() if parameter.requires_grad}
+        trainable = {
+            name for name, parameter in model.named_parameters() if parameter.requires_grad
+        }
         self.assertTrue(any("self_attn.q_proj" in name for name in trainable))
         self.assertTrue(any("self_attn.q_norm" in name for name in trainable))
         self.assertTrue(any("linear_attn.norm" in name for name in trainable))
@@ -143,7 +141,9 @@ class TrainableParameterClassificationTest(unittest.TestCase):
     def test_qwen_hf_full_mode_is_union_but_still_excludes_block_norms(self):
         model = QwenHFModel()
         configure_hf_trainable_parameters(model, FULL)
-        trainable = {name for name, parameter in model.named_parameters() if parameter.requires_grad}
+        trainable = {
+            name for name, parameter in model.named_parameters() if parameter.requires_grad
+        }
         self.assertTrue(any("self_attn" in name for name in trainable))
         self.assertTrue(any("mlp.experts" in name for name in trainable))
         self.assertTrue(any("mlp.gate" in name for name in trainable))

@@ -1,0 +1,40 @@
+# XTuner-compatible pure-text cache for the WMDP-Bio forget corpus (Gemma4).
+# Gemma4 caches are BOS-anchored by default: every 4096-token pack starts with
+# <bos> (bos_per_pack=true), matching how Gemma4 is prompted at evaluation
+# time. The WMDP-Bio forget corpus averages
+# ~13k tokens per document (0.31 EOS per pack), so document-level
+# add_bos_token would leave ~2/3 of packs without any BOS at all.
+tokenizer:
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/internal/checkpoints/gemma-26b-a4b
+  trust_remote_code: true
+
+dataset:
+  files: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/data/wmdp/bio-forget-corpus/*.parquet
+  format: parquet
+  text_key: text
+  sample_ratio: 1.0
+  filter_empty: true
+  max_documents: null
+
+packing:
+  # Match the Intern-S2 XTuner convention: the harmful loader uses seed+1.
+  seed: 43
+  pack_level: soft
+  pack_max_length: 4096
+  pack_to_max_length: true
+  pack_chunk_size: 10000
+  pack_workers: 4
+  pack_extra_buffer_size: 100
+  global_pack: false
+  add_eos_token: true
+  add_bos_token: false
+  bos_per_pack: true
+
+build:
+  tokenize_workers: 64
+  tokenize_batch_size: 1024
+  show_progress: true
+
+output:
+  directory: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/data_cache/Xtuner/gemma4_wmdp_bio_softpack4096_bos/forget
+  overwrite: false

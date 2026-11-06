@@ -1,0 +1,10 @@
+{"run": "qwen35-main-cyber-grad-diff", "step": 23, "unix_time": 1790906021.2667277, "wmdp_cyber": 0.5556114745848012, "mmlu": 0.8330827067669173}
+{"run": "qwen35-main-cyber-grad-diff", "step": 46, "unix_time": 1790906439.72652, "wmdp_cyber": 0.4066431806743835, "mmlu": 0.7714285714285715}
+{"run": "qwen35-main-cyber-grad-diff", "step": 69, "unix_time": 1790907126.096658, "wmdp_cyber": 0.31655762455963765, "mmlu": 0.7398496240601504}
+{"run": "qwen35-main-cyber-grad-diff", "step": 92, "unix_time": 1790907539.343535, "wmdp_cyber": 0.2778057372924006, "mmlu": 0.6776942355889725}
+{"run": "qwen35-main-cyber-grad-diff", "step": 115, "unix_time": 1790907952.729584, "wmdp_cyber": 0.2622043281328636, "mmlu": 0.649624060150376}
+{"run": "qwen35-main-cyber-grad-diff", "step": 138, "unix_time": 1790908366.277486, "wmdp_cyber": 0.26874685455460495, "mmlu": 0.624561403508772}
+{"run": "qwen35-main-cyber-grad-diff", "step": 161, "unix_time": 1790908778.7190502, "wmdp_cyber": 0.26723704076497234, "mmlu": 0.6010025062656642}
+{"run": "qwen35-main-cyber-grad-diff", "step": 184, "unix_time": 1790909192.249452, "wmdp_cyber": 0.2541519879214897, "mmlu": 0.5704260651629073}
+{"run": "qwen35-main-cyber-grad-diff", "step": 207, "unix_time": 1790909605.441926, "wmdp_cyber": 0.2521389028686462, "mmlu": 0.6055137844611529}
+{"run": "qwen35-main-cyber-grad-diff", "step": 230, "unix_time": 1790910018.1557279, "wmdp_cyber": 0.25666834423754403, "mmlu": 0.5804511278195489}

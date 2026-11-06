@@ -1,0 +1,86 @@
+# Gemma4 main GradAscent — NOCAP rerun (softcap disabled).
+# Replaces the capped run (weights deleted 2026-09-30): with
+# final_logit_softcapping=30 the GA objective saturates at NLL=2*30=60 and
+# gradient dies, so the capped result measured the cap, not the algorithm
+# (main/gemma4/GA_family_softcap_analysis_20260930.md). Probe confirmed the
+# uncapped readout costs nothing at baseline (|delta|<=0.5pp).
+# The ONLY functional change vs the capped config: model.path points at the
+# shadow dir whose config.json nulls text_config.final_logit_softcapping —
+# the path itself is the switch (config->bridge->forward->online-eval->ckpt
+# export all follow model.path; no code change).
+# Algorithm hyperparams and training plan unchanged from the capped gemma4
+# main line (= intern main line): gbs 32 / mbs 4 / lr 1e-6 / 3 epochs =
+# 2133 optimizer steps (711 steps/epoch) on TP1/PP1/EP8.
+name: gemma4-main-grad-ascent-nocap
+model:
+  name: gemma4
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/gemma/gemma-26b-a4b-nocap
+  num_experts: 128
+  trust_remote_code: true
+data:
+  name: wmdp_bio
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/gemma4_wmdp_bio_softpack4096/forget
+  retain_cache: ${OU_CACHE_ROOT}/Xtuner/fineweb_edu_5b_gemma4_softpack4096_seed42
+  sequence_length: 4096
+  pad_token_id: 0
+  shuffle: false
+algorithm:
+  name: grad_ascent
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 3
+  learning_rate: 1.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 0.0
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: gemma4-main-grad-ascent-nocap
+  save_steps: []
+  save_interval_steps: 0
+  save_final_checkpoint: true
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main
+    micro_batch_size: 4
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      activation_recompute: full
+      use_distributed_optimizer: true
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_bio, mmlu]
+      num_fewshot: 0
+      # WMDP-Bio remains full-size; MMLU uses 35 questions per leaf subtask.
+      task_limits: {mmlu: 35}
+      # Forget-only objective, no reference resident: batch_size 64 was safe
+      # on the capped gemma4 run (same static profile); keep 16 as fallback.
+      batch_size: 64
+      # NOCAP runs keep their online-eval records separate from the capped
+      # line (which stays in main/gemma4/online-evaluation).
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/gemma4/online-evaluation/nocap
+      steps: [1, 300, 700, 1000, 1400, 1700, 1800, 1900, 2000, 2100, 2133]

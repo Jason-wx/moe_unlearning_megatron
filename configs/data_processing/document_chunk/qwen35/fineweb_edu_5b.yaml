@@ -1,0 +1,35 @@
+# document_chunk_v1 cache of FineWeb-Edu 5B (same 92-shard source as the XTuner caches) for Qwen3.5.
+# (The other data-processing method is XTuner soft-pack, see ../../xtuner/.)
+#
+# Each document is tokenized on its own and split into max_length windows;
+# chunks never span two documents. This builder is driven by CLI flags rather
+# than YAML: every key below maps 1:1 to a flag of src/data/build_document_chunk_cache.py.
+#
+# Reproduces the existing cache data_cache/qwen35/qwen35_fineweb_edu_5b_max1024_stride1024 (see its meta.json).
+#
+#   PYTHONPATH=src envs/open-unlearning/bin/python -m data.build_document_chunk_cache \
+#     --model-path /mnt/shared-storage-gpfs2/gpfs2-shared-public/huggingface/zskj-hub/models-Qwen-Qwen3.5-35B-A3B-Base \
+#     --data-files '/mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/data/fineweb-edu-5b-shuffle/*.parquet' \
+#     --dataset-path parquet \
+#     --text-key text \
+#     --max-length 1024 \
+#     --stride 1024 \
+#     --min-length 1 \
+#     --workers 16 \
+#     --tokenize-batch-size 512 \
+#     --output-dir /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/data_cache/qwen35/qwen35_fineweb_edu_5b_max1024_stride1024
+#
+# Pass --drop-last or --no-add-special-tokens only when the matching key below is changed.
+
+model_path: /mnt/shared-storage-gpfs2/gpfs2-shared-public/huggingface/zskj-hub/models-Qwen-Qwen3.5-35B-A3B-Base
+data_files: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/data/fineweb-edu-5b-shuffle/*.parquet
+dataset_path: parquet
+text_key: text
+max_length: 1024
+stride: 1024
+min_length: 1
+drop_last: false
+add_special_tokens: true
+workers: 16
+tokenize_batch_size: 512
+output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/data_cache/qwen35/qwen35_fineweb_edu_5b_max1024_stride1024

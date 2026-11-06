@@ -1,0 +1,94 @@
+# Intern-S2 main PDU - retain_loss_eps 1.98 tuning copy of ./pdu.yaml.
+# Copied verbatim from main/interns2/pdu.yaml (main-scale: gbs 32 / lr 1e-6 /
+# 3 epochs = 2142 steps, TP1/PP1/EP8, mbs 1). This copy changes ONLY:
+#   - algorithm retain_loss_eps: 2.05 -> 1.98 (tighter retain NLL anchor).
+#   - online eval: last step only (steps [2142]) and FULL-SIZE on both tasks
+#     (task_limits omitted so MMLU runs all 14042; wmdp_bio was already full).
+#   - run name / output_name: suffixed -eps1p98 (ckpt does not collide with
+#     the existing interns2-main-pdu export).
+#   - checkpoint output_root: .../checkpoints/unlearn/megatron/main/InternS2.
+# Everything else - model, caches, schedule, optimizer, mbs 1, parallel
+# (activation_recompute full), the final-ckpt save plan (save_steps [] +
+# save_final_checkpoint true = one ckpt at the last step), online-eval
+# output_dir - is unchanged.
+# mbs is 1 (not 4): PDU is a full-logit algorithm and OOM'd at mbs 4 after
+# step 1 (verified 2026-09-24). gbs stays 32, so the optimization math is
+# unchanged.
+name: interns2-main-pdu-eps1p98
+model:
+  name: interns2
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/internal/checkpoints/intern/Intern-S2-base05
+  num_experts: 256
+  trust_remote_code: true
+data:
+  name: wmdp_bio
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/interns2_wmdp_bio_softpack4096/forget
+  retain_cache: ${OU_CACHE_ROOT}/Xtuner/fineweb_edu_5b_interns2_softpack4096_seed42
+  sequence_length: 4096
+  pad_token_id: 248044
+  shuffle: false
+algorithm:
+  name: pdu
+  gamma: 1.0
+  alpha: 1.0
+  retain_loss_eps: 1.98
+  primal_dual: true
+  dual_step_size: 0.1
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 3
+  learning_rate: 1.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 0.0
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: interns2-main-pdu-eps1p98
+  save_steps: []
+  save_interval_steps: 0
+  save_final_checkpoint: true
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main/InternS2
+    micro_batch_size: 1
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      activation_recompute: full
+      use_distributed_optimizer: true
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_bio, mmlu]
+      num_fewshot: 0
+      # Full-size on both tasks this round: wmdp_bio full + MMLU full (14042).
+      # task_limits omitted entirely -> limit_for() falls back to limit=None
+      # -> no cap on either task (was {mmlu: 35}; verified in config.py).
+      # Same unified online-eval batch size as the source. Lower this to 16
+      # only if the first evaluation forward hits CUDA OOM.
+      batch_size: 64
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/interns2/online-evaluation
+      # Last step only (3 epochs = 2142 steps).
+      steps: [2142]

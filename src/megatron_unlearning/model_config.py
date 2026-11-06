@@ -46,14 +46,29 @@ def build_mcore_config_dict(run: MegatronRunConfig) -> dict[str, Any]:
             run.parallel.num_layers_in_first_pipeline_stage
         )
     if run.parallel.num_layers_in_last_pipeline_stage is not None:
-        result["num_layers_in_last_pipeline_stage"] = (
-            run.parallel.num_layers_in_last_pipeline_stage
-        )
+        result["num_layers_in_last_pipeline_stage"] = run.parallel.num_layers_in_last_pipeline_stage
     _validate_pipeline_layer_partition(result)
-    # The standardized TP4/PP2/EP4 path intentionally does not use activation
-    # recomputation / gradient checkpointing.
-    for key in ("recompute_granularity", "recompute_method", "recompute_num_layers"):
-        result.pop(key, None)
+    if run.parallel.activation_recompute is None:
+        # The standardized TP4/PP2/EP4 path intentionally does not use activation
+        # recomputation / gradient checkpointing.
+        for key in ("recompute_granularity", "recompute_method", "recompute_num_layers"):
+            result.pop(key, None)
+    elif run.parallel.activation_recompute == "full":
+        # Required for the TP1/EP8 layout on 140 GiB parts: without TP/SP
+        # sharding, per-rank activations plus the full-vocab CE fp32 spike no
+        # longer fit alongside the frozen reference and optimizer states.
+        # MCore requires an explicit recompute_num_layers in [1, layers/PP]
+        # when granularity is "full"; 1 = checkpoint every layer individually.
+        result["recompute_granularity"] = "full"
+        result["recompute_method"] = "uniform"
+        result["recompute_num_layers"] = 1
+    elif run.parallel.activation_recompute == "selective":
+        result["recompute_granularity"] = "selective"
+    else:
+        raise ValueError(
+            "parallel.activation_recompute must be None, 'full' or 'selective'; "
+            f"got {run.parallel.activation_recompute!r}"
+        )
     return result
 
 
@@ -77,9 +92,7 @@ def _validate_pipeline_layer_partition(config: dict[str, Any]) -> None:
             raise ValueError("uneven pipeline assignment does not cover every model layer")
         return
     if remaining_layers <= 0 or remaining_layers % remaining_stages:
-        raise ValueError(
-            "remaining model layers must divide evenly across middle pipeline stages"
-        )
+        raise ValueError("remaining model layers must divide evenly across middle pipeline stages")
 
 
 def summarize_mcore_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -104,6 +117,7 @@ def summarize_mcore_config(config: dict[str, Any]) -> dict[str, Any]:
         "expert_model_parallel_size",
         "expert_tensor_parallel_size",
         "sequence_parallel",
+        "recompute_granularity",
     )
     return {key: config.get(key) for key in keys}
 

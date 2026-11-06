@@ -1,0 +1,98 @@
+# Intern-S2 main-cyber SimNPO configuration.
+# Migrated from main/interns2/simnpo_saveckpts.yaml (bio line; selected
+# ckpt interns2-main-simnpo-saveckpts-step2142, offline 0.742/0.778;
+# training math identical to bio simnpo.yaml). Dataset switched to
+# wmdp_cyber. Training plan: round 1 (10 epochs / 230 steps, 2026-09-30)
+# never forgot (cyber flat 0.48-0.50, mmlu slow slide to 0.83). Round 2
+# truncated to 1 epoch (0.435/0.845 - slightly deeper, the one counter-
+# example to the under-forgetting pattern). Round 3: back to the exact R1
+# schedule - 10 epochs = 230 steps, per-epoch eval [23..230] - saving
+# ONLY the chosen step ckpt (save_steps [23], no final save).
+# SimNPO hyperparams (beta=0.1, delta=0, lr 5e-5 cosine) mirror pure_npo -
+# NEVER tuned on bio (see main/interns2/README.md warning section); treat
+# weak-or-broken cyber results as hyperparam mismatch first.
+# mbs is 1 (not 4): Megatron vocab_parallel_cross_entropy materializes
+# full fp32 logits (~30.7 GiB at mbs 4) on top of ~115 GiB static with the
+# retain stream - OOM at step 2, bio-line evidence 2026-09-24 twice.
+# gbs stays 32; optimization math unchanged.
+# min_learning_rate 0 -> 1e-6 for all ten configs (cosine floor, 2026-09-30).
+name: interns2-main-cyber-simnpo
+model:
+  name: interns2
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/intern/Intern-S2-base05
+  num_experts: 256
+  trust_remote_code: true
+data:
+  name: wmdp_cyber
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/interns2_wmdp_cyber_softpack4096/forget
+  retain_cache: ${OU_CACHE_ROOT}/Xtuner/fineweb_edu_5b_interns2_softpack4096_seed42
+  sequence_length: 4096
+  pad_token_id: 248044
+  shuffle: false
+algorithm:
+  name: simnpo
+  beta: 0.1
+  delta: 0.0
+  gamma: 1.0
+  alpha: 1.0
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 10
+  learning_rate: 5.0e-05
+  weight_decay: 0.0
+  # Cosine decays from 5e-5 toward the 1e-6 floor over the full schedule,
+  # matching the pure_npo schedule.
+  min_learning_rate: 1.0e-06
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: interns2-main-cyber-simnpo
+  save_steps: [23]
+  save_interval_steps: 0
+  save_final_checkpoint: false
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main-cyber
+    micro_batch_size: 1
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      activation_recompute: full
+      use_distributed_optimizer: true
+    # SimNPO is reference-free; this block is inert and kept for uniformity.
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_cyber, mmlu]
+      num_fewshot: 0
+      # WMDP-Cyber remains full-size (1987 questions); MMLU uses 35 questions
+      # per leaf subtask.
+      task_limits: {mmlu: 35}
+      # Eval bs 16 (unchanged from bio): step-1 eval forward at 64 OOMs
+      # (~30.7 GiB full-vocab eval logits + ~115 GiB static; bio-line
+      # evidence 2026-09-24). Static footprint is dataset-independent.
+      batch_size: 16
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/main-cyber/interns2/online-evaluation
+      steps: [23, 46, 69, 92, 115, 138, 161, 184, 207, 230]

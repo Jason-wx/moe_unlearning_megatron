@@ -96,6 +96,37 @@ class ObjectiveTests(unittest.TestCase):
         self.assertGreater(logits.grad[0, 0, 0], 0)
         self.assertGreater(logits.grad[0, 1, 1], 0)
 
+    def test_ceu_stays_exact_on_confident_gold_logits(self):
+        # Gold leading by tens of nats: in fp32 p_gold rounds to 1.0 and the
+        # old direct 1/(1 - p_gold) renormalization clamped the denominator
+        # (inflating the target up to ~6e3x); once the non-gold softmax
+        # underflowed the target itself vanished and the gradient zeroed.
+        # The log-space leave-gold-out target must match the fp64 reference
+        # at every gap size.
+        for gap in (5.0, 20.0, 46.0, 100.0):
+            with self.subTest(gap=gap):
+                logits = torch.tensor([[[gap, 0.0, 1.0, -1.0]]], requires_grad=True)
+                labels = torch.tensor([[0]])
+                loss, _ = ceu_objective(logits, labels, ignore_first_n_tokens=0)
+                self.assertTrue(torch.isfinite(loss))
+                loss.backward()
+                self.assertTrue(torch.isfinite(logits.grad).all())
+                self.assertGreater(logits.grad[0, 0, 0].abs().item(), 0.0)
+
+                reference = logits.detach().double().clone().requires_grad_(True)
+                target = reference.softmax(dim=-1).clone()
+                target[0, 0, 0] = 0.0
+                # CEU treats the leave-gold-out target as a constant anchor
+                # (stop-gradient), mirroring the implementation's detached
+                # target.
+                target = (target / target.sum(dim=-1, keepdim=True)).detach()
+                reference_loss = -(target * reference.log_softmax(dim=-1)).sum()
+                reference_loss.backward()
+                self.assertTrue(
+                    torch.allclose(logits.grad.double(), reference.grad, rtol=1e-3, atol=1e-6),
+                    f"gap={gap}: {logits.grad.double().tolist()} vs {reference.grad.tolist()}",
+                )
+
     def test_pdu_logit_dispersion(self):
         logits = torch.tensor([[[1.0, 3.0], [2.0, 2.0]]])
         mask = torch.tensor([[True, False]])

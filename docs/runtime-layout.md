@@ -8,7 +8,8 @@
 | Conda 环境 | /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/envs/open-unlearning |
 | 数据 cache | 仓库内 data_cache/ |
 | DeepSpeed checkpoint | 仓库内 saves/ 或训练 YAML 的 training.output_dir |
-| Megatron checkpoint | 训练 YAML 的 backends.megatron.output_root |
+| Megatron checkpoint | 训练 YAML 的 backends.megatron.output_root/training.output_name |
+| Megatron 在线评测 | 训练 YAML 的 backends.megatron.evaluation.output_dir |
 | 运行日志 | 仓库内 outputs/ |
 | 评测结果 | 仓库内 evaluations/ |
 | W&B 离线记录 | 仓库内 wandb_offline/ |
@@ -30,7 +31,6 @@ RuntimePaths 支持用环境变量覆盖默认位置：
 | OU_RUN_ROOT | 日志和运行输出根目录 |
 | OU_EVAL_ROOT | 评测结果根目录 |
 | OU_WANDB_ROOT | W&B 目录 |
-| OU_MEGATRON_CHECKPOINT_ROOT | Megatron 批量流水线查找 checkpoint 的根目录 |
 
 未设置 OU_RUNTIME_ROOT 时使用上表中的仓库内兼容布局。设置后默认使用：
 

@@ -1,0 +1,13 @@
+# Minimal data bridge for the unified DeepSpeed adapter.
+# src/open_unlearning/backends/deepspeed.py sets the handlers and adds each
+# args.cache_dir from the training YAML; for forget-only algorithms it removes
+# the retain split with ~data.retain.
+forget:
+  WMDP_forget:
+    handler: CachedDocumentChunkDataset
+    args: {}
+retain:
+  WMDP_retain:
+    handler: CachedDocumentChunkDataset
+    args: {}
+anchor: forget

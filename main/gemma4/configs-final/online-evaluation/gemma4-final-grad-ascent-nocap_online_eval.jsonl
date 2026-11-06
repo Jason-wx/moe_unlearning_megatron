@@ -1,0 +1,11 @@
+{"run": "gemma4-final-grad-ascent-nocap", "step": 1, "unix_time": 1791027748.866481, "wmdp_bio": 0.7918303220738413, "mmlu": 0.768922305764411}
+{"run": "gemma4-final-grad-ascent-nocap", "step": 300, "unix_time": 1791028883.2864032, "wmdp_bio": 0.24666142969363708, "mmlu": 0.24210526315789474}
+{"run": "gemma4-final-grad-ascent-nocap", "step": 700, "unix_time": 1791030386.4443374, "wmdp_bio": 0.24666142969363708, "mmlu": 0.23709273182957394}
+{"run": "gemma4-final-grad-ascent-nocap", "step": 1000, "unix_time": 1791031556.1441693, "wmdp_bio": 0.23959151610369206, "mmlu": 0.23809523809523808}
+{"run": "gemma4-final-grad-ascent-nocap", "step": 1400, "unix_time": 1791033077.4597652, "wmdp_bio": 0.24901806755695208, "mmlu": 0.23107769423558897}
+{"run": "gemma4-final-grad-ascent-nocap", "step": 1700, "unix_time": 1791034246.0962653, "wmdp_bio": 0.2608012568735271, "mmlu": 0.23558897243107768}
+{"run": "gemma4-final-grad-ascent-nocap", "step": 1800, "unix_time": 1791034712.8976586, "wmdp_bio": 0.2631578947368421, "mmlu": 0.24060150375939848}
+{"run": "gemma4-final-grad-ascent-nocap", "step": 1900, "unix_time": 1791035180.4980972, "wmdp_bio": 0.2356637863315004, "mmlu": 0.23609022556390977}
+{"run": "gemma4-final-grad-ascent-nocap", "step": 2000, "unix_time": 1791035647.6539922, "wmdp_bio": 0.24901806755695208, "mmlu": 0.23258145363408522}
+{"run": "gemma4-final-grad-ascent-nocap", "step": 2100, "unix_time": 1791036114.2796686, "wmdp_bio": 0.25530243519245877, "mmlu": 0.24160401002506265}
+{"run": "gemma4-final-grad-ascent-nocap", "step": 2133, "unix_time": 1791036347.368662, "wmdp_bio": 0.25608798114689707, "mmlu": 0.23809523809523808}

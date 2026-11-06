@@ -1,0 +1,38 @@
+# XTuner soft packing of FineWeb-Edu 5B for Gemma4 (same 92-shard source and
+# seed 42 as the Intern-S2 / Qwen3.5 FineWeb caches). Gemma4 caches are
+# BOS-anchored by default: every 4096-token pack starts with <bos>
+# (bos_per_pack=true), matching how Gemma4 is prompted at evaluation time.
+tokenizer:
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/internal/checkpoints/gemma-26b-a4b
+  trust_remote_code: true
+
+dataset:
+  files: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/data/fineweb-edu-5b-shuffle/*.parquet
+  format: parquet
+  text_key: text
+  sample_ratio: 1.0
+  filter_empty: true
+  max_documents: null
+
+packing:
+  seed: 42
+  pack_level: soft
+  pack_max_length: 4096
+  pack_to_max_length: true
+  pack_chunk_size: 10000
+  pack_workers: 4
+  pack_extra_buffer_size: 100
+  global_pack: false
+  add_eos_token: true
+  add_bos_token: false
+  bos_per_pack: true
+
+build:
+  tokenize_workers: 64
+  # The Gemma tokenizer is larger; the Gemma doc-chunk build also used 512 here.
+  tokenize_batch_size: 512
+  show_progress: true
+
+output:
+  directory: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/data_cache/Xtuner/fineweb_edu_5b_gemma4_softpack4096_bos_seed42
+  overwrite: false

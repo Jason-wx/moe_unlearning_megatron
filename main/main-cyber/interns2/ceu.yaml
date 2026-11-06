@@ -1,0 +1,99 @@
+# Intern-S2 main-cyber CEU configuration (forget-only: retain_cache null -
+# CEU's objective has no retain term).
+# Migrated from main/interns2/ceu.yaml (bio line; selected ckpt
+# interns2-main-ceu-step2142, offline 0.698/0.758): dataset switched to
+# wmdp_cyber, everything else unchanged except the training plan. Round 1
+# (10 epochs / 230 steps, 2026-09-30) plateaued at cyber ~0.40 / mmlu
+# ~0.77 from epoch 4 onward. Round 2 truncated to 4 epochs (shorter-cosine
+# dynamics). Round 3: back to the exact R1 schedule - 10 epochs = 230
+# steps, per-epoch eval [23..230] - saving ONLY the chosen step ckpt
+# (save_steps [92], no final save).
+# CEU hyperparams (gamma=1.0, ignore_first_n_tokens=1) were NEVER tuned on
+# bio (see main/interns2/README.md warning section); treat weak-or-broken
+# cyber results as hyperparam mismatch first.
+# mbs is 1 (not 4): CEU materializes several full-vocab fp32 logit tensors
+# ([mbs*4096, 248k] each) and OOMs on 140G H200 at mbs 4 (bio-line
+# evidence 2026-09-23). gbs stays 32, so the optimization math is unchanged.
+# eval batch_size 64 -> 32: cyber question stems are longer; V-cyber ran
+# clean at 32.
+# lr 1e-6 -> 5e-6 per the cyber-line decision (PureNPO and SimNPO keep 5e-5).
+# min_learning_rate 0 -> 1e-6 for all ten configs (cosine floor, 2026-09-30).
+name: interns2-main-cyber-ceu
+model:
+  name: interns2
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/intern/Intern-S2-base05
+  num_experts: 256
+  trust_remote_code: true
+data:
+  name: wmdp_cyber
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/interns2_wmdp_cyber_softpack4096/forget
+  retain_cache: null
+  sequence_length: 4096
+  pad_token_id: 248044
+  shuffle: false
+algorithm:
+  name: ceu
+  gamma: 1.0
+  ignore_first_n_tokens: 1
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 10
+  learning_rate: 5.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 1.0e-06
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: interns2-main-cyber-ceu
+  save_steps: [92]
+  save_interval_steps: 0
+  save_final_checkpoint: false
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main-cyber
+    micro_batch_size: 1
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      # CEU is a full-logit algorithm (no fused CE); activation recomputation
+      # keeps the materialized logits within memory budget.
+      activation_recompute: full
+      use_distributed_optimizer: true
+    # CEU does not use a reference model; this block is inert and kept for
+    # uniformity.
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_cyber, mmlu]
+      num_fewshot: 0
+      # WMDP-Cyber remains full-size (1987 questions); MMLU uses 35 questions
+      # per leaf subtask.
+      task_limits: {mmlu: 35}
+      # 32 (not the bio line's 64): cyber prompts are longer; V-cyber ran
+      # clean at 32. Fall back to 16 only if the first evaluation forward
+      # hits CUDA OOM.
+      batch_size: 32
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/main-cyber/interns2/online-evaluation
+      steps: [23, 46, 69, 92, 115, 138, 161, 184, 207, 230]

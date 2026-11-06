@@ -1,0 +1,97 @@
+# Intern-S2-base05 WMDP-Cyber forget-only TRACE, checkpoint round.
+# Non-algorithm hyperparameters aligned with open-unlearning
+# main/main-cyber/interns2/grad_diff.yaml (2026-10-01 round-3 schedule):
+# lr 5e-6, gbs 32, 10 epochs, wd 0, adam betas 0.9/0.999, eps 1e-8, clip 1.0,
+# cosine schedule with min_lr 1e-6 and 5% linear warmup, seed 42, bf16.
+# adam_beta2=0.999 and the cosine floor/warmup are ALIGNMENT changes vs the
+# TRACE bio runs (which inherited 0.95 / no explicit schedule keys).
+# micro_batch_size stays 4 (grad_diff.yaml uses 1 only because full-model
+# GradDiff OOMs at mbs 4): TRACE selected-expert training is proven at mb4.
+# global_batch_size == micro_batch_size * DP == 4*8 kept from the online-eval
+# round so the layout matches the validated 2026-10-04 run exactly.
+# Checkpoint round (2026-10-04, user): online eval OFF; save ONLY the final
+# step-230 checkpoint under the main-cyber weights root.
+model:
+  # The bio-era path .../checkpoints/Intern-S2-base05 is stale; the model
+  # lives under .../checkpoints/intern/ (same as the reference yaml).
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/internal/checkpoints/intern/Intern-S2-base05
+  num_experts: 256
+  trust_remote_code: true
+
+data:
+  # Cyber forget cache: 743 packs; retain = fineweb_edu_5b interns2 set
+  # (both from the main-cyber line). No BOS variant needed for Intern-S2
+  # (its tokenizer adds no BOS).
+  forget_cache: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/data_cache/Xtuner/interns2_wmdp_cyber_softpack4096/forget
+  retain_cache: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/data_cache/Xtuner/fineweb_edu_5b_interns2_softpack4096_seed42
+  sequence_length: 4096
+  pad_token_id: 248044
+  shuffle: false
+
+# 8 GPUs: TP(1) * PP(1) * CP(1) * DP(8) = 8.
+# Expert groups: ETP(1) * EP(8) * PP(1) * expert-DP(1) = 8.
+# Each rank owns 256/8=32 routed experts per layer. The explicit
+# tensor/pipeline/context_parallel: 1 keys date from the online-eval round;
+# kept so the layout stays identical to the validated 2026-10-04 run.
+parallel:
+  world_size: 8
+  tensor_parallel: 1
+  pipeline_parallel: 1
+  context_parallel: 1
+  expert_parallel: 8
+  expert_tensor_parallel: 1
+  sequence_parallel: false
+  # Memory-safe path proven by the bio runs at mb4: checkpoint every
+  # transformer layer and recompute during backward.
+  activation_recompute: full
+  use_distributed_optimizer: true
+
+optimizer:
+  learning_rate: 5.0e-6
+  weight_decay: 0.0
+  gradient_clip: 1.0
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-8
+  # Aligned with grad_diff.yaml: cosine floor and 5% warmup.
+  min_learning_rate: 1.0e-6
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+
+training:
+  micro_batch_size: 4
+  global_batch_size: 32
+  # 743 forget packs / 32 = 23 steps per epoch; 10 epochs pinned to 230
+  # (same schedule as the online-eval round).
+  train_steps: 230
+  num_train_epochs: 10
+  seed: 42
+  bf16: true
+  output_dir: outputs/intern_s2_base05_wmdp_cyber_forget1_lr5e-6_ep10_ep8_mb4_gb32_forgetonly
+
+trace:
+  # Cyber selection re-run 2026-10-04 (safer2ai 4xH200, trace-interns2-
+  # cyber-selection-safer2ai-68900371): 779/10240 forget-critical experts,
+  # threshold 0.0793 -- identical count to the deleted 2026-09-20 run
+  # (same cache + model + seed, deterministic).
+  selection_metadata: outputs/intern_s2_base05_wmdp_cyber_softpack4096_expert_selection/metadata.json
+  # Forget-only ablation (unchanged TRACE algorithm hyperparameters): the
+  # retain objective is disabled but still goes through PGD calibration.
+  lambda_forget: 1.0
+  lambda_retain: 0.0
+  gamma: 1.0e-5
+  pgd_learning_rate: 700
+  pgd_max_steps: 200
+  pgd_tolerance: 1.0e-6
+  alpha_min: 1.0
+  moe_grouped_gemm: false
+  # Weights root for the main-cyber line (user-specified 2026-10-04): the
+  # final checkpoint lands at <root>/<run_name>/checkpoint-230.
+  checkpoint_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main-cyber
+  resume_from: null
+  # Save ONLY the final checkpoint (step 230 = 10 epochs): native + HF export,
+  # no intermediate epochs.
+  save_checkpoints: true
+  checkpoint_cadence: steps
+  checkpoint_steps: [230]

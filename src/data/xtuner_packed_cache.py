@@ -71,6 +71,7 @@ def _materialize_pack(
     *,
     pack_max_length: int,
     pad_token_id: int,
+    bos_token_id: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[int], list[int], int]:
     kept = _fit_pack(
         document_indices,
@@ -79,6 +80,11 @@ def _materialize_pack(
     )
     content: list[int] = []
     starts: list[int] = []
+    if bos_token_id is not None:
+        # Anchor every packed sequence with a BOS so the training regime
+        # matches how the model is prompted at evaluation time. Costs one
+        # content slot per pack (the final token is truncated).
+        content.append(int(bos_token_id))
     for index in kept:
         remaining = pack_max_length - len(content)
         if remaining <= 0:
@@ -117,6 +123,7 @@ def write_xtuner_packed_cache(
     pack_extra_buffer_size: int,
     sample_ratio: float = 1.0,
     filter_empty: bool = True,
+    bos_token_id: int | None = None,
     metadata: dict | None = None,
     show_progress: bool = True,
 ) -> dict:
@@ -180,6 +187,7 @@ def write_xtuner_packed_cache(
                 document_lengths,
                 pack_max_length=pack_max_length,
                 pad_token_id=pad_token_id,
+                bos_token_id=bos_token_id,
             )
             inputs.tofile(token_handle)
             labels.tofile(label_handle)
@@ -233,6 +241,8 @@ def write_xtuner_packed_cache(
         "pack_workers": int(pack_workers),
         "pack_extra_buffer_size": int(pack_extra_buffer_size),
         "global_pack": False,
+        "bos_per_pack": bos_token_id is not None,
+        "bos_token_id": None if bos_token_id is None else int(bos_token_id),
     }
     (output_dir / META_NAME).write_text(
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",

@@ -170,22 +170,42 @@ def partition_specs(specs, workers):
     return partitions
 
 
-def content_length(tokenizer, max_length, add_special_tokens):
+_SPECIAL_TOKEN_PROBE = "hello world"
+
+
+def special_token_affixes(tokenizer):
+    """Return the (prefix, suffix) ids the tokenizer adds when encoding with special tokens.
+
+    Tokenizers without build_inputs_with_special_tokens (e.g. Gemma4, whose BOS is
+    only added on encode) are wrapped with these, so the slots content_length
+    reserves are exactly the tokens with_special_tokens emits.
+    """
+    plain = list(tokenizer(_SPECIAL_TOKEN_PROBE, add_special_tokens=False)["input_ids"])
+    full = list(tokenizer(_SPECIAL_TOKEN_PROBE, add_special_tokens=True)["input_ids"])
+    for start in range(len(full) - len(plain) + 1):
+        if full[start : start + len(plain)] == plain:
+            return full[:start], full[start + len(plain) :]
+    raise ValueError("cannot locate the plain encoding inside the special-token encoding")
+
+
+def content_length(tokenizer, max_length, add_special_tokens, affixes=None):
     if not add_special_tokens:
         return max_length
     if hasattr(tokenizer, "build_inputs_with_special_tokens"):
         num_special_tokens = len(tokenizer.build_inputs_with_special_tokens([]))
     else:
-        num_special_tokens = len(tokenizer("", add_special_tokens=True)["input_ids"])
+        prefix, suffix = affixes if affixes is not None else special_token_affixes(tokenizer)
+        num_special_tokens = len(prefix) + len(suffix)
     return max(1, max_length - num_special_tokens)
 
 
-def with_special_tokens(tokenizer, token_ids, add_special_tokens):
+def with_special_tokens(tokenizer, token_ids, add_special_tokens, affixes=None):
     if not add_special_tokens:
         return token_ids
     if hasattr(tokenizer, "build_inputs_with_special_tokens"):
         return tokenizer.build_inputs_with_special_tokens(token_ids)
-    return token_ids
+    prefix, suffix = affixes if affixes is not None else special_token_affixes(tokenizer)
+    return [*prefix, *token_ids, *suffix]
 
 
 def tokenize_documents(tokenizer, texts):
@@ -223,7 +243,8 @@ def process_partition(worker_id, partition, args_dict, part_dir):
     add_special_tokens = args_dict["add_special_tokens"]
     text_key = args_dict["text_key"]
     batch_size = args_dict["tokenize_batch_size"]
-    chunk_content_length = content_length(tokenizer, max_length, add_special_tokens)
+    affixes = special_token_affixes(tokenizer) if add_special_tokens else None
+    chunk_content_length = content_length(tokenizer, max_length, add_special_tokens, affixes)
 
     part_dir = Path(part_dir)
     token_path = part_dir / f"part_{worker_id:05d}.{TOKEN_IDS_NAME}"
@@ -266,6 +287,7 @@ def process_partition(worker_id, partition, args_dict, part_dir):
                                     tokenizer,
                                     token_ids[start : start + chunk_length],
                                     add_special_tokens,
+                                    affixes,
                                 )
                                 token_offset = num_tokens
                                 written = write_token_ids(token_handle, input_ids)
@@ -317,6 +339,7 @@ def process_partition(worker_id, partition, args_dict, part_dir):
                                 tokenizer,
                                 token_ids[start : start + chunk_length],
                                 add_special_tokens,
+                                affixes,
                             )
                             token_offset = num_tokens
                             written = write_token_ids(token_handle, input_ids)
@@ -371,8 +394,39 @@ def merge_parts(output_dir, part_results):
     return chunk_index, token_offset
 
 
-def main() -> None:
-    args = build_arg_parser().parse_args()
+def main(argv: list[str] | None = None) -> None:
+    import transformers
+
+    args = build_arg_parser().parse_args(argv)
+    add_special_tokens = not args.no_add_special_tokens
+
+    # Validate everything before touching the filesystem, so a bad invocation can
+    # never remove an existing cache under --overwrite.
+    max_length = int(args.max_length)
+    min_length = int(args.min_length)
+    tokenize_batch_size = int(args.tokenize_batch_size)
+    workers = int(args.workers)
+    if max_length <= 0 or min_length <= 0 or tokenize_batch_size <= 0 or workers <= 0:
+        raise ValueError(
+            "max_length, min_length, tokenize_batch_size, and workers must be positive"
+        )
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        args.model_path, trust_remote_code=args.trust_remote_code
+    )
+    # Special tokens (e.g. Gemma4's per-chunk BOS) take max_length slots, so the
+    # default stride is the content length: consecutive chunks stay contiguous.
+    chunk_content_length = content_length(tokenizer, max_length, add_special_tokens)
+    stride = normalize_stride(args.stride) or chunk_content_length
+    if stride <= 0:
+        raise ValueError("stride must be positive")
+    if stride > chunk_content_length:
+        raise ValueError(
+            f"stride={stride} exceeds the {chunk_content_length} content tokens per chunk "
+            f"(max_length={max_length} minus special tokens), so tokens between chunks "
+            f"would be dropped. Omit --stride or use --stride {chunk_content_length}."
+        )
+    paths = resolve_data_files(args.data_files)
+
     output_dir = args.output_dir.resolve()
     tmp_dir = output_dir.with_name(output_dir.name + ".tmp")
     part_dir = tmp_dir / "parts"
@@ -387,23 +441,6 @@ def main() -> None:
         safe_rmtree(tmp_dir)
     part_dir.mkdir(parents=True)
 
-    max_length = int(args.max_length)
-    stride = normalize_stride(args.stride) or max_length
-    min_length = int(args.min_length)
-    tokenize_batch_size = int(args.tokenize_batch_size)
-    workers = int(args.workers)
-    if (
-        max_length <= 0
-        or stride <= 0
-        or min_length <= 0
-        or tokenize_batch_size <= 0
-        or workers <= 0
-    ):
-        raise ValueError(
-            "max_length, stride, min_length, tokenize_batch_size, and workers must be positive"
-        )
-
-    paths = resolve_data_files(args.data_files)
     if args.dataset_path == "json":
         specs = make_jsonl_file_specs(paths, workers, args.max_documents)
         partitions = [[spec] for spec in specs]
@@ -420,7 +457,7 @@ def main() -> None:
         "stride": stride,
         "min_length": min_length,
         "drop_last": bool(args.drop_last),
-        "add_special_tokens": not args.no_add_special_tokens,
+        "add_special_tokens": add_special_tokens,
         "tokenize_batch_size": tokenize_batch_size,
     }
 

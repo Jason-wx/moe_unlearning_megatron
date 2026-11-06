@@ -8,6 +8,8 @@ the activation value sent to later pipeline stages.
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import torch
@@ -148,6 +150,7 @@ class RMUHookState:
     _control_directions: dict[int, torch.Tensor] = field(default_factory=dict)
     _hook_handles: list = field(default_factory=list)
     pipeline_position: str | None = None
+    _hooks_enabled: bool = True
 
     def begin_student_batch(self, batch: dict[str, torch.Tensor]) -> None:
         self.current_batch = batch
@@ -155,7 +158,19 @@ class RMUHookState:
     def begin_optimizer_step(self) -> None:
         self.step_metrics.clear()
 
+    @contextmanager
+    def hooks_disabled(self) -> Iterator[None]:
+        """Temporarily bypass RMU hooks for ordinary model forwards."""
+        previous = self._hooks_enabled
+        self._hooks_enabled = False
+        try:
+            yield
+        finally:
+            self._hooks_enabled = previous
+
     def reference_hook(self, _module, _inputs, output):
+        if not self._hooks_enabled:
+            return output
         activation = _activation_from_output(output)
         self.reference_activations.append(activation.detach())
         raise RMUTargetLayerReached(activation)
@@ -191,6 +206,8 @@ class RMUHookState:
         return direction * target_norm * self.algorithm.control_scale_coeff
 
     def student_hook(self, _module, _inputs, output):
+        if not self._hooks_enabled:
+            return output
         if self.current_batch is None:
             raise RuntimeError("RMU student batch was not registered before forward")
         if not self.reference_activations:

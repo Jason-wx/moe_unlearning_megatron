@@ -1,0 +1,91 @@
+# Intern-S2 main-cyber WGA forget-only configuration (beta=2.0, gamma=1.0,
+# alpha=0 disables retain NLL, retain null).
+# Migrated from main/interns2/WGA_forgetonly.yaml (bio line; selected ckpt
+# interns2-main-wga-step2142, offline 0.726/0.765): dataset switched to
+# wmdp_cyber, everything else unchanged except the training plan. Round 1
+# (10 epochs / 230 steps, 2026-09-30): epoch 1 was the last sane point
+# (cyber 0.375 / mmlu 0.803); MMLU collapsed to 0.35 at epoch 2 and never
+# recovered. Round 2 truncated to 1 epoch but the shorter cosine removed
+# the R1 dynamics (0.471/0.848 - sane but under-forgot). Round 3: back to
+# the exact R1 schedule - 10 epochs = 230 steps, per-epoch eval [23..230] -
+# saving ONLY the chosen step ckpt (save_steps [23], no final save).
+# eval batch_size 64 -> 32: cyber question stems are longer; V-cyber ran
+# clean at 32.
+# lr 1e-6 -> 5e-6 per the cyber-line decision (PureNPO and SimNPO keep 5e-5).
+# min_learning_rate 0 -> 1e-6 for all ten configs (cosine floor, 2026-09-30).
+name: interns2-main-cyber-wga-forgetonly
+model:
+  name: interns2
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/internal/checkpoints/intern/Intern-S2-base05
+  num_experts: 256
+  trust_remote_code: true
+data:
+  name: wmdp_cyber
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/interns2_wmdp_cyber_softpack4096/forget
+  retain_cache: null
+  sequence_length: 4096
+  pad_token_id: 248044
+  shuffle: false
+algorithm:
+  name: wga
+  beta: 2.0
+  gamma: 1.0
+  alpha: 0.0
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 10
+  learning_rate: 5.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 1.0e-06
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: interns2-main-cyber-wga-forgetonly
+  save_steps: [23]
+  save_interval_steps: 0
+  save_final_checkpoint: false
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main-cyber
+    micro_batch_size: 4
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      activation_recompute: full
+      use_distributed_optimizer: true
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_cyber, mmlu]
+      num_fewshot: 0
+      # WMDP-Cyber remains full-size (1987 questions); MMLU uses 35 questions
+      # per leaf subtask.
+      task_limits: {mmlu: 35}
+      # 32 (not the bio line's 64): cyber prompts are longer; V-cyber ran
+      # clean at 32. Fall back to 16 only if the first evaluation forward
+      # hits CUDA OOM.
+      batch_size: 32
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/main-cyber/interns2/online-evaluation
+      steps: [23, 46, 69, 92, 115, 138, 161, 184, 207, 230]

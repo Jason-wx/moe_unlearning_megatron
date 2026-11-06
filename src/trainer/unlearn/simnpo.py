@@ -48,23 +48,30 @@ class _SimNPOBase(GradDiff):
             model, inputs["forget"]
         )
 
-        retain_inputs = inputs["retain"]
-        retain_inputs = {
-            "input_ids": retain_inputs["input_ids"],
-            "attention_mask": retain_inputs["attention_mask"],
-            "labels": retain_inputs["labels"],
-        }
-        retain_loss = self.compute_retain_loss(model=model, retain_inputs=retain_inputs)
-
-        loss = self.gamma * forget_loss + self.alpha * retain_loss
-
         component_values = {
             "forget_loss": forget_loss,
-            "retain_loss": retain_loss,
             "forget_mean_nll": reduced_nll.mean(),
             "sigmoid_argument": sigmoid_argument.mean(),
             "forget_gradient_weight": (2.0 * torch.sigmoid(-sigmoid_argument)).mean(),
         }
+
+        # Paper-aligned SimNPO can run forget-only (the published WMDP
+        # configuration). When alpha is zero, return before touching retain
+        # inputs so the data pipeline can omit retain examples and avoid an
+        # otherwise useless second forward pass (mirrors WGA).
+        if self.alpha == 0.0:
+            loss = self.gamma * forget_loss
+        else:
+            retain_inputs = inputs["retain"]
+            retain_inputs = {
+                "input_ids": retain_inputs["input_ids"],
+                "attention_mask": retain_inputs["attention_mask"],
+                "labels": retain_inputs["labels"],
+            }
+            retain_loss = self.compute_retain_loss(model=model, retain_inputs=retain_inputs)
+            loss = self.gamma * forget_loss + self.alpha * retain_loss
+            component_values["retain_loss"] = retain_loss
+
         for name, value in component_values.items():
             self._component_loss_sums[name] += value.detach().float().item()
         self._component_loss_count += 1

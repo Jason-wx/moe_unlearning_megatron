@@ -1,7 +1,7 @@
 # 评测结果
 
 本目录只保存正式汇总和对应的 `lm-eval` 原始 JSON。
-整体完成情况见 [实验进展](../docs/experiment-progress.md)。
+运行与评测方法见 [Runbook](../RUNBOOK.md)。
 
 ```text
 results/baselines/                 Gemma 4、Intern-S2、Qwen3.5 基础模型结果

@@ -1,0 +1,11 @@
+{"run": "qwen35-main-pure-npo", "step": 1, "unix_time": 1790582543.733958, "wmdp_bio": 0.8342498036135114, "mmlu": 0.8340852130325814}
+{"run": "qwen35-main-pure-npo", "step": 300, "unix_time": 1790585318.8669717, "wmdp_bio": 0.7847604084838963, "mmlu": 0.8100250626566416}
+{"run": "qwen35-main-pure-npo", "step": 700, "unix_time": 1790588963.6616602, "wmdp_bio": 0.7431264728986646, "mmlu": 0.7944862155388471}
+{"run": "qwen35-main-pure-npo", "step": 1000, "unix_time": 1790591750.2058115, "wmdp_bio": 0.7486252945797329, "mmlu": 0.7929824561403509}
+{"run": "qwen35-main-pure-npo", "step": 1400, "unix_time": 1790595404.775243, "wmdp_bio": 0.7486252945797329, "mmlu": 0.7949874686716792}
+{"run": "qwen35-main-pure-npo", "step": 1700, "unix_time": 1790598177.4866729, "wmdp_bio": 0.7588373919874313, "mmlu": 0.7869674185463659}
+{"run": "qwen35-main-pure-npo", "step": 1800, "unix_time": 1790599188.1888883, "wmdp_bio": 0.7588373919874313, "mmlu": 0.7909774436090226}
+{"run": "qwen35-main-pure-npo", "step": 1900, "unix_time": 1790600197.6747906, "wmdp_bio": 0.7604084838963079, "mmlu": 0.7879699248120301}
+{"run": "qwen35-main-pure-npo", "step": 2000, "unix_time": 1790601207.9294772, "wmdp_bio": 0.7619795758051846, "mmlu": 0.787468671679198}
+{"run": "qwen35-main-pure-npo", "step": 2100, "unix_time": 1790602218.6258874, "wmdp_bio": 0.7706205813040062, "mmlu": 0.7929824561403509}
+{"run": "qwen35-main-pure-npo", "step": 2142, "unix_time": 1790602718.7898788, "wmdp_bio": 0.7651217596229379, "mmlu": 0.7909774436090226}

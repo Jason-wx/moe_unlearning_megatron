@@ -1,0 +1,10 @@
+{"run": "gemma4-main-cyber-pdu-eps3p00", "step": 23, "unix_time": 1790980020.4626772, "wmdp_cyber": 0.4529441368897836, "mmlu": 0.7568922305764411}
+{"run": "gemma4-main-cyber-pdu-eps3p00", "step": 46, "unix_time": 1790980748.2753794, "wmdp_cyber": 0.2712632108706593, "mmlu": 0.7538847117794486}
+{"run": "gemma4-main-cyber-pdu-eps3p00", "step": 69, "unix_time": 1790981475.7715259, "wmdp_cyber": 0.27025666834423756, "mmlu": 0.7604010025062656}
+{"run": "gemma4-main-cyber-pdu-eps3p00", "step": 92, "unix_time": 1790982202.6874373, "wmdp_cyber": 0.25767488676396577, "mmlu": 0.7609022556390977}
+{"run": "gemma4-main-cyber-pdu-eps3p00", "step": 115, "unix_time": 1790982931.8039007, "wmdp_cyber": 0.2521389028686462, "mmlu": 0.7583959899749373}
+{"run": "gemma4-main-cyber-pdu-eps3p00", "step": 138, "unix_time": 1790983659.6849465, "wmdp_cyber": 0.2571716155007549, "mmlu": 0.7553884711779448}
+{"run": "gemma4-main-cyber-pdu-eps3p00", "step": 161, "unix_time": 1790984386.9225338, "wmdp_cyber": 0.25012581781580273, "mmlu": 0.750375939849624}
+{"run": "gemma4-main-cyber-pdu-eps3p00", "step": 184, "unix_time": 1790985112.9683325, "wmdp_cyber": 0.24458983392048314, "mmlu": 0.7523809523809524}
+{"run": "gemma4-main-cyber-pdu-eps3p00", "step": 207, "unix_time": 1790985837.6037683, "wmdp_cyber": 0.24458983392048314, "mmlu": 0.7513784461152883}
+{"run": "gemma4-main-cyber-pdu-eps3p00", "step": 230, "unix_time": 1790986563.0552356, "wmdp_cyber": 0.24308002013085053, "mmlu": 0.7523809523809524}

@@ -1,0 +1,11 @@
+{"run": "gemma4-main-pure-npo", "step": 1, "unix_time": 1790605589.141846, "wmdp_bio": 0.793401413982718, "mmlu": 0.7694235588972431}
+{"run": "gemma4-main-pure-npo", "step": 300, "unix_time": 1790608035.1111445, "wmdp_bio": 0.608012568735271, "mmlu": 0.7192982456140351}
+{"run": "gemma4-main-pure-npo", "step": 700, "unix_time": 1790611301.3785043, "wmdp_bio": 0.5208169677926159, "mmlu": 0.6942355889724311}
+{"run": "gemma4-main-pure-npo", "step": 1000, "unix_time": 1790613751.3785505, "wmdp_bio": 0.6441476826394344, "mmlu": 0.7022556390977444}
+{"run": "gemma4-main-pure-npo", "step": 1400, "unix_time": 1790616986.8416915, "wmdp_bio": 0.6653574234092694, "mmlu": 0.7167919799498746}
+{"run": "gemma4-main-pure-npo", "step": 1700, "unix_time": 1790619446.83782, "wmdp_bio": 0.6417910447761194, "mmlu": 0.706265664160401}
+{"run": "gemma4-main-pure-npo", "step": 1800, "unix_time": 1790620344.6980402, "wmdp_bio": 0.6559308719560094, "mmlu": 0.7147869674185464}
+{"run": "gemma4-main-pure-npo", "step": 1900, "unix_time": 1790621243.5192509, "wmdp_bio": 0.6496465043205027, "mmlu": 0.7203007518796992}
+{"run": "gemma4-main-pure-npo", "step": 2000, "unix_time": 1790622143.027955, "wmdp_bio": 0.6504320502749411, "mmlu": 0.7213032581453634}
+{"run": "gemma4-main-pure-npo", "step": 2100, "unix_time": 1790623041.8996959, "wmdp_bio": 0.655145326001571, "mmlu": 0.718796992481203}
+{"run": "gemma4-main-pure-npo", "step": 2133, "unix_time": 1790623416.686774, "wmdp_bio": 0.6527886881382561, "mmlu": 0.7177944862155389}

@@ -1,0 +1,88 @@
+# Intern-S2 main UNDIAL configuration (forget-only, like the V3-era root
+# undial.yaml: retain_cache null, alpha=0 disables the retain term).
+# Main-scale setting: gbs 32 / lr 1e-6 / 3 epochs = 2142 optimizer steps on
+# the TP1/PP1/EP8 layout; cosine decays to 0; final checkpoint auto-saved.
+# mbs is 1 (not 4): UNDIAL materializes full-vocab fp32 logits for both the
+# student and the frozen teacher (teacher_shifted.exp() OOMs at mbs 4 on
+# 140G H200, verified 2026-09-23); mbs 1 matches the historical verified
+# undial_mbs1_ga4.yaml. gbs stays 32, so the optimization math is unchanged.
+name: interns2-main-undial
+model:
+  name: interns2
+  path: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/jincheng/sgtm/checkpoints/intern/Intern-S2-base05
+  num_experts: 256
+  trust_remote_code: true
+data:
+  name: wmdp_bio
+  forget_cache: ${OU_CACHE_ROOT}/Xtuner/interns2_wmdp_bio_softpack4096/forget
+  retain_cache: null
+  sequence_length: 4096
+  pad_token_id: 248044
+  shuffle: false
+algorithm:
+  name: undial
+  beta: 3.0
+  gamma: 1.0
+  alpha: 0.0
+training:
+  global_batch_size: 32
+  train_steps: -1
+  num_train_epochs: 3
+  learning_rate: 1.0e-06
+  weight_decay: 0.0
+  min_learning_rate: 0.0
+  lr_scheduler_type: cosine
+  lr_warmup_ratio: 0.05
+  lr_warmup_init: 0.0
+  lr_decay_steps: auto
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-08
+  gradient_clip: 1.0
+  seed: 42
+  bf16: true
+  trainable_param_mode: full
+  save_every_epoch: false
+  wandb_project: OpenUnlearning
+  wandb_dir: ${OU_WANDB_ROOT}
+  output_name: interns2-main-undial
+  save_steps: []
+  save_interval_steps: 0
+  save_final_checkpoint: true
+  wandb_mode: offline
+backends:
+  megatron:
+    enabled: true
+    output_root: /mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/checkpoints/unlearn/megatron/main
+    micro_batch_size: 1
+    parallel:
+      world_size: 8
+      tensor_parallel: 1
+      pipeline_parallel: 1
+      context_parallel: 1
+      expert_parallel: 8
+      expert_tensor_parallel: 1
+      sequence_parallel: false
+      # UNDIAL is a full-logit algorithm (no fused CE) and keeps a frozen
+      # reference resident; activation recomputation is required on this
+      # layout.
+      activation_recompute: full
+      use_distributed_optimizer: true
+    # UNDIAL is a reference algorithm: a frozen reference model IS built.
+    reference:
+      allocation: same_as_student
+      frozen: true
+      logit_window_microbatches: 2
+    evaluation:
+      enabled: true
+      tasks: [wmdp_bio, mmlu]
+      num_fewshot: 0
+      # WMDP-Bio remains full-size; MMLU uses 35 questions per leaf subtask.
+      task_limits: {mmlu: 35}
+      # Same unified online-eval batch size as the rest of the main line.
+      # UNDIAL keeps a frozen reference resident; the step-1 eval forward
+      # OOMs at batch_size=64 (verified 2026-09-24, ~136 GiB in use); 16 is
+      # the pre-planned fallback. Training stays mbs 1.
+      batch_size: 16
+      output_dir: /mnt/shared-storage-user/safethm-share/wangxiao1/Safe_MoE/open-unlearning/main/interns2/online-evaluation
+      steps: [1, 300, 700, 1000, 1400, 1700, 1800, 1900, 2000, 2100, 2142]

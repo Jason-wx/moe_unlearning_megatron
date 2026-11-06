@@ -32,9 +32,10 @@ SUPPORTED_ALGORITHMS = {
     "undial",
     "rmu",
 }
-RETAIN_ALGORITHMS = {"grad_diff", "simnpo", "token_simnpo", "pdu", "rmu"}
+RETAIN_ALGORITHMS = {"grad_diff", "pdu", "rmu"}
 FULL_LOGIT_ALGORITHMS = {"ceu", "pdu", "undial"}
 REFERENCE_ALGORITHMS = {"npo", "pure_npo", "token_npo", "undial", "rmu"}
+SUPPORTED_EVAL_TASKS = {"wmdp_bio", "wmdp_cyber", "mmlu"}
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ class ParallelConfig:
     expert_parallel: int = 4
     expert_tensor_parallel: int | None = 1
     sequence_parallel: bool = True
+    activation_recompute: str | None = None
     use_distributed_optimizer: bool = True
     num_layers_in_first_pipeline_stage: int | None = None
     num_layers_in_last_pipeline_stage: int | None = None
@@ -112,6 +114,86 @@ class ReferenceConfig:
 
 
 @dataclass(frozen=True)
+class EvaluationConfig:
+    """Optional in-training online evaluation on lm-eval MCQ benchmarks.
+
+    Disabled by default so the many existing configs keep working unchanged: a
+    config without an ``evaluation`` block leaves ``enabled=False`` and no other
+    field is consulted. When enabled, the training loop scores the resident GPU
+    parameters (no checkpoint export) on the requested tasks at the given steps.
+    """
+
+    enabled: bool = False
+    steps: tuple[int, ...] = ()
+    tasks: tuple[str, ...] = ()
+    limit: int | None = None
+    # Per-task override of ``limit`` (lm-eval semantics). Value is passed straight
+    # to lm-eval's ``limit``, which for a *group* task like mmlu caps each of its
+    # 57 leaf subtasks (deterministic head slice, identical across ranks -> EP8
+    # stays in lockstep). So mmlu: 35 keeps ~35 questions per subtask (35x57~=2000
+    # total, stratified) while a task absent from the map falls back to ``limit``
+    # (None => full). Stored as a tuple of (task, limit) pairs for immutability.
+    task_limits: tuple[tuple[str, int], ...] = ()
+    num_fewshot: int = 0
+    # Questions scored per online-eval forward pass. Purely an eval-speed knob:
+    # each forward packs ``batch_size`` MCQ questions (x their answer choices)
+    # instead of one, cutting the forward count ~batch_size-fold (e.g. mmlu's
+    # 14042 questions). Independent of training ``micro_batch_size``. Default 1
+    # keeps the historical one-question-per-forward behaviour.
+    batch_size: int = 1
+    # Optional directory for a live, human-readable JSONL log of the online-eval
+    # results (one record per eval step, appended by rank 0 as training runs so
+    # the file can be tailed). ``None`` disables the file (results still print /
+    # log to wandb).
+    output_dir: str | None = None
+
+    def validate(self) -> None:
+        if not self.enabled:
+            return
+        if not self.steps:
+            raise ValueError("evaluation.steps must be non-empty when evaluation is enabled")
+        if any(step <= 0 for step in self.steps):
+            raise ValueError("evaluation.steps must contain only positive integers")
+        if len(set(self.steps)) != len(self.steps):
+            raise ValueError("evaluation.steps must not contain duplicates")
+        if not self.tasks:
+            raise ValueError("evaluation.tasks must be non-empty when evaluation is enabled")
+        unsupported = [task for task in self.tasks if task not in SUPPORTED_EVAL_TASKS]
+        if unsupported:
+            raise ValueError(
+                f"evaluation.tasks contains unsupported tasks {unsupported}; "
+                f"supported={sorted(SUPPORTED_EVAL_TASKS)}"
+            )
+        if len(set(self.tasks)) != len(self.tasks):
+            raise ValueError("evaluation.tasks must not contain duplicates")
+        if self.limit is not None and self.limit <= 0:
+            raise ValueError("evaluation.limit must be a positive integer or null")
+        limit_tasks = [name for name, _ in self.task_limits]
+        if len(set(limit_tasks)) != len(limit_tasks):
+            raise ValueError("evaluation.task_limits must not contain duplicate tasks")
+        for name, value in self.task_limits:
+            if name not in SUPPORTED_EVAL_TASKS:
+                raise ValueError(
+                    f"evaluation.task_limits references unsupported task {name!r}; "
+                    f"supported={sorted(SUPPORTED_EVAL_TASKS)}"
+                )
+            if value <= 0:
+                raise ValueError("evaluation.task_limits values must be positive integers")
+        if self.num_fewshot < 0:
+            raise ValueError("evaluation.num_fewshot must be nonnegative")
+        if self.batch_size <= 0:
+            raise ValueError("evaluation.batch_size must be a positive integer")
+
+    def limit_for(self, task: str) -> int | None:
+        """Resolve the lm-eval ``limit`` for ``task``: a per-task override from
+        ``task_limits`` if present, otherwise the shared ``limit`` (default None)."""
+        for name, value in self.task_limits:
+            if name == task:
+                return value
+        return self.limit
+
+
+@dataclass(frozen=True)
 class OptimizerConfig:
     learning_rate: float = 5e-6
     weight_decay: float = 0.0
@@ -135,6 +217,7 @@ class TrainingConfig:
     save_every_epoch: bool = False
     save_final_checkpoint: bool = False
     save_steps: tuple[int, ...] = ()
+    save_interval_steps: int = 0
     wandb_mode: str = "offline"
     wandb_project: str = "open-unlearning-megatron"
     wandb_dir: str = "wandb_offline"
@@ -148,7 +231,7 @@ class TrainingConfig:
 class AlgorithmConfig:
     name: str = "grad_ascent"
     gamma: float = 1.0
-    alpha: float = 1.0
+    alpha: float = 0.0
     beta: float = 0.1
     delta: float = 0.0
     beta1: float = 5.0
@@ -173,6 +256,7 @@ class MegatronRunConfig:
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     algorithm: AlgorithmConfig = field(default_factory=AlgorithmConfig)
+    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
 
     def validate(self, *, check_paths: bool = True) -> ParallelLayout:
         if self.algorithm.name not in SUPPORTED_ALGORITHMS:
@@ -194,6 +278,8 @@ class MegatronRunConfig:
             raise ValueError("save_steps must contain only positive integers")
         if len(set(self.training.save_steps)) != len(self.training.save_steps):
             raise ValueError("save_steps must not contain duplicates")
+        if self.training.save_interval_steps < 0:
+            raise ValueError("save_interval_steps must be nonnegative")
         if self.training.wandb_mode != "offline":
             raise ValueError("Megatron W&B logging must use offline mode")
         if self.optimizer.lr_scheduler_type != "cosine":
@@ -227,8 +313,25 @@ class MegatronRunConfig:
                     "RMU sequence_length must be divisible by tensor_parallel "
                     "for sequence-parallel activation masks"
                 )
+            if self.parallel.activation_recompute == "full":
+                raise ValueError(
+                    "RMU's intermediate-layer forward hooks cannot run inside "
+                    "full activation recomputation: the hook computes its activation "
+                    "loss during the checkpoint's no-grad forward, so the returned "
+                    "activation has no autograd edge and the optimizer receives zero "
+                    "gradients. Use activation_recompute=null (or selective only if "
+                    "verified) for RMU."
+                )
         self.reference.validate()
         self.parallel.validate_pipeline_partition()
+
+        self.evaluation.validate()
+        if self.evaluation.enabled and (
+            self.parallel.pipeline_parallel != 1 or self.parallel.context_parallel != 1
+        ):
+            raise ValueError(
+                "online evaluation currently requires pipeline_parallel==1 and context_parallel==1"
+            )
 
         layout = self.parallel.layout(num_experts=self.model.num_experts)
         data_parallel = layout.data_parallel_size
@@ -251,7 +354,8 @@ class MegatronRunConfig:
 
 def algorithm_uses_retain(config: AlgorithmConfig) -> bool:
     return config.name in RETAIN_ALGORITHMS or (
-        config.name in {"wga", "satimp", "undial"} and config.alpha != 0.0
+        config.name in {"wga", "satimp", "undial", "simnpo", "token_simnpo", "pure_npo", "npo"}
+        and config.alpha != 0.0
     )
 
 
@@ -279,6 +383,23 @@ def _section(mapping: Mapping[str, Any], name: str) -> dict[str, Any]:
 def from_mapping(mapping: Mapping[str, Any]) -> MegatronRunConfig:
     training = _section(mapping, "training")
     training["save_steps"] = tuple(int(step) for step in training.get("save_steps", ()))
+    training["save_interval_steps"] = int(training.get("save_interval_steps", 0))
+    evaluation = _section(mapping, "evaluation")
+    if "steps" in evaluation:
+        evaluation["steps"] = tuple(int(step) for step in evaluation["steps"])
+    if "tasks" in evaluation:
+        evaluation["tasks"] = tuple(str(task) for task in evaluation["tasks"])
+    if evaluation.get("limit") is not None:
+        evaluation["limit"] = int(evaluation["limit"])
+    if "task_limits" in evaluation:
+        task_limits = evaluation["task_limits"]
+        if not isinstance(task_limits, Mapping):
+            raise TypeError("evaluation.task_limits must be a mapping")
+        evaluation["task_limits"] = tuple(
+            (str(name), int(value)) for name, value in task_limits.items()
+        )
+    if "batch_size" in evaluation:
+        evaluation["batch_size"] = int(evaluation["batch_size"])
     return MegatronRunConfig(
         model=ModelSource(**_section(mapping, "model")),
         data=DataSource(**_section(mapping, "data")),
@@ -287,6 +408,7 @@ def from_mapping(mapping: Mapping[str, Any]) -> MegatronRunConfig:
         optimizer=OptimizerConfig(**_section(mapping, "optimizer")),
         training=TrainingConfig(**training),
         algorithm=AlgorithmConfig(**_section(mapping, "algorithm")),
+        evaluation=EvaluationConfig(**evaluation),
     )
 
 

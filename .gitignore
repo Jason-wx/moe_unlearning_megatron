@@ -8,9 +8,21 @@
 /runtime/
 /scripts/**/logs/
 /scripts/**/rjob_logs/
+# Early per-model configs and tuning history stay on cluster storage only;
+# the uploaded experiment configs are configs/training/megatron/final-training-configs/.
+/configs/training/megatron/interns2/
+/configs/training/megatron/qwen35/
+/configs/training/megatron/gemma4/
+# Local coding-agent state.
+/.zcode/
+/.agents/
+/.codex/
+/.claude/
 /tests/*
 !tests/test_xtuner_packed_cache.py
 !tests/test_trainable_parameters.py
+!tests/test_document_chunk_cache.py
+!tests/fixtures/
 
 # Legacy project rules
 submit.py
@@ -29,7 +41,8 @@ output*/
 wandb/
 wandb_offline/
 data/
-!*/data/ 
+!*/data/
+!configs/internal/deepspeed/data/
 evals/
 !*/evals/  
 # Byte-compiled / optimized / DLL files

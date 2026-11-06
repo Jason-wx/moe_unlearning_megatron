@@ -6,134 +6,109 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
+FINAL_CONFIGS = REPO / "configs" / "training" / "megatron" / "final-training-configs"
+DEEPSPEED_CONFIGS = REPO / "configs" / "training" / "deepspeed"
+# Only the directories that are part of the repository; early per-model configs
+# under configs/training/megatron/<model>/ stay on cluster storage (.gitignore).
+YAML_ROOTS = (
+    REPO / "configs" / "data_processing",
+    REPO / "configs" / "internal",
+    FINAL_CONFIGS,
+    DEEPSPEED_CONFIGS,
+    REPO / "tests" / "fixtures",
+)
+FINAL_ALGORITHMS = {
+    "CEU": "ceu",
+    "GradAscent": "grad_ascent",
+    "GradDiff": "grad_diff",
+    "PDU": "pdu",
+    "PureNPO": "pure_npo",
+    "RMU": "rmu",
+    "SatImp": "satimp",
+    "SimNPO": "simnpo",
+    "WGA": "wga",
+}
+FINAL_EPOCHS = {"bio": 3, "cyber": 10}
+
+
+def _load(path: Path) -> dict:
+    with path.open(encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def _final_configs() -> list[Path]:
+    # Trace.yaml belongs to a different codebase and is kept only as a record.
+    return sorted(p for p in FINAL_CONFIGS.glob("*/*/*.yaml") if p.name != "Trace.yaml")
 
 
 class ConfigCatalogTests(unittest.TestCase):
     def test_all_yaml_files_are_mappings(self) -> None:
-        for path in sorted((REPO / "configs").rglob("*.yaml")):
-            with self.subTest(path=path.relative_to(REPO)), path.open(encoding="utf-8") as handle:
-                self.assertIsInstance(yaml.safe_load(handle), dict)
+        for root in YAML_ROOTS:
+            for path in sorted(root.rglob("*.yaml")):
+                with self.subTest(path=path.relative_to(REPO)):
+                    self.assertIsInstance(_load(path), dict)
 
-    def test_component_names_match_catalog(self) -> None:
-        for path in sorted((REPO / "configs" / "algorithms").glob("*.yaml")):
-            with path.open(encoding="utf-8") as handle:
-                algorithm = yaml.safe_load(handle)["algorithm"]
-            self.assertIn("name", algorithm)
-            self.assertIn("deepspeed_trainer", algorithm)
+    def test_final_configs_cover_nine_algorithms_per_model_and_domain(self) -> None:
+        domain_dirs = sorted(path for path in FINAL_CONFIGS.glob("*/*") if path.is_dir())
+        self.assertEqual(
+            [str(path.relative_to(FINAL_CONFIGS)) for path in domain_dirs],
+            [f"{model}/{domain}" for model in ("gemma", "intern", "qwen") for domain in ("bio", "cyber")],
+        )
+        for domain_dir in domain_dirs:
+            with self.subTest(directory=str(domain_dir.relative_to(REPO))):
+                stems = {path.stem for path in domain_dir.glob("*.yaml")} - {"Trace"}
+                self.assertEqual(stems, set(FINAL_ALGORITHMS))
+                for stem, algorithm in FINAL_ALGORITHMS.items():
+                    config = _load(domain_dir / f"{stem}.yaml")
+                    self.assertEqual(config["algorithm"]["name"], algorithm)
 
-    def test_deepspeed_world_size_matches_accelerate(self) -> None:
-        for path in sorted((REPO / "configs" / "backends" / "deepspeed").glob("*.yaml")):
-            with path.open(encoding="utf-8") as handle:
-                backend = yaml.safe_load(handle)["backends"]["deepspeed"]
-            accelerate_path = REPO / backend["accelerate_config"]
-            with accelerate_path.open(encoding="utf-8") as handle:
-                accelerate = yaml.safe_load(handle)
-            self.assertEqual(backend["world_size"], accelerate["num_processes"])
+    def test_final_configs_share_one_training_plan(self) -> None:
+        for path in _final_configs():
+            domain = path.parent.name
+            with self.subTest(path=path.relative_to(REPO)):
+                config = _load(path)
+                training = config["training"]
+                megatron = config["backends"]["megatron"]
+                parallel = megatron["parallel"]
+                self.assertEqual(list(config["backends"]), ["megatron"])
+                self.assertEqual(training["global_batch_size"], 32)
+                self.assertEqual(training["num_train_epochs"], FINAL_EPOCHS[domain])
+                self.assertEqual(training["gradient_clip"], 1.0)
+                self.assertEqual(training["lr_scheduler_type"], "cosine")
+                self.assertEqual(training["lr_warmup_ratio"], 0.05)
+                self.assertEqual(training["lr_warmup_init"], 0.0)
+                self.assertEqual(training["lr_decay_steps"], "auto")
+                self.assertEqual(training["seed"], 42)
+                self.assertEqual(training["trainable_param_mode"], "full")
+                self.assertIn("output_name", training)
+                self.assertNotIn("output_dir", training)
+                self.assertEqual(config["data"]["sequence_length"], 4096)
+                self.assertFalse(config["data"]["shuffle"])
+                self.assertEqual(parallel["world_size"], 8)
+                self.assertEqual(parallel["pipeline_parallel"], 1)
+                self.assertEqual(parallel["context_parallel"], 1)
 
-    def test_all_training_configs_use_unit_gradient_clipping(self) -> None:
-        for path in sorted((REPO / "configs" / "training").rglob("*.yaml")):
-            with self.subTest(path=path.relative_to(REPO)), path.open(encoding="utf-8") as handle:
-                config = yaml.safe_load(handle)
-            self.assertEqual(config["training"]["gradient_clip"], 1.0)
-            deepspeed = config["backends"].get("deepspeed")
-            if deepspeed is not None:
+    def test_final_configs_evaluate_their_own_wmdp_domain_online(self) -> None:
+        for path in _final_configs():
+            with self.subTest(path=path.relative_to(REPO)):
+                evaluation = _load(path)["backends"]["megatron"]["evaluation"]
+                self.assertTrue(evaluation["enabled"])
                 self.assertEqual(
-                    deepspeed["deepspeed_config"]["gradient_clipping"],
-                    1.0,
+                    list(evaluation["tasks"]), [f"wmdp_{path.parent.name}", "mmlu"]
                 )
 
-    def test_training_catalog_has_one_eight_gpu_config_per_algorithm(self) -> None:
-        training_root = REPO / "configs" / "training"
-        for backend_dir in sorted(path for path in training_root.iterdir() if path.is_dir()):
-            for model_dir in sorted(path for path in backend_dir.iterdir() if path.is_dir()):
-                algorithms = []
-                for path in sorted(model_dir.glob("*.yaml")):
-                    with path.open(encoding="utf-8") as handle:
-                        config = yaml.safe_load(handle)
-                    algorithms.append(config["algorithm"]["name"])
-                    backend = config["backends"][backend_dir.name]
-                    world_size = (
-                        backend["parallel"]["world_size"]
-                        if backend_dir.name == "megatron"
-                        else backend["world_size"]
-                    )
-                    self.assertEqual(world_size, 8, path.relative_to(REPO))
-                    if backend_dir.name == "megatron":
-                        self.assertEqual(config["training"]["lr_scheduler_type"], "cosine")
-                        self.assertEqual(config["training"]["lr_warmup_ratio"], 0.03)
-                        self.assertEqual(config["training"]["lr_warmup_init"], 0.0)
-                        self.assertEqual(config["training"]["lr_decay_steps"], "auto")
-                        self.assertIn("output_name", config["training"])
-                        self.assertNotIn("output_dir", config["training"])
-                        self.assertEqual(
-                            backend["output_root"],
-                            "/mnt/shared-storage-gpfs2/wenxiaoyu-gpfs02/wangxiao1/"
-                            "checkpoints/unlearn/megatron/v3",
-                            path.relative_to(REPO),
-                        )
-                self.assertEqual(
-                    len(algorithms),
-                    len(set(algorithms)),
-                    f"duplicate algorithm configs in {model_dir.relative_to(REPO)}",
-                )
+    def test_deepspeed_configs_use_eight_gpus_and_unit_gradient_clipping(self) -> None:
+        algorithms = []
+        for path in sorted(DEEPSPEED_CONFIGS.rglob("*.yaml")):
+            with self.subTest(path=path.relative_to(REPO)):
+                config = _load(path)
+                backend = config["backends"]["deepspeed"]
+                algorithms.append(config["algorithm"]["name"])
+                self.assertEqual(backend["world_size"], 8)
+                self.assertEqual(config["training"]["gradient_clip"], 1.0)
+                self.assertEqual(backend["deepspeed_config"]["gradient_clipping"], 1.0)
+        self.assertEqual(len(algorithms), len(set(algorithms)))
 
-        interns2 = training_root / "megatron" / "interns2"
-        self.assertEqual(len(list(interns2.glob("*.yaml"))), 13)
-
-    def test_interns2_megatron_empirical_hyperparameters_are_locked(self) -> None:
-        expected = {
-            "ceu": (1.0e-6, {"gamma": 1.0, "ignore_first_n_tokens": 1}),
-            "grad_ascent": (1.0e-6, {"gamma": 1.0}),
-            "grad_diff": (1.0e-6, {"gamma": 1.0, "alpha": 1.0}),
-            "npo": (1.0e-6, {"beta": 0.1, "gamma": 1.0}),
-            "pdu": (
-                1.0e-6,
-                {
-                    "gamma": 1.0,
-                    "alpha": 100.0,
-                    "retain_loss_eps": 0.3,
-                    "primal_dual": True,
-                    "dual_step_size": 5.0,
-                },
-            ),
-            "pure_npo": (1.0e-6, {"beta": 0.1, "gamma": 1.0}),
-            "rmu": (
-                1.0e-5,
-                {
-                    "gamma": 1.0,
-                    "alpha": 350.0,
-                    "target_layer": 9,
-                    "train_layers": [7, 8, 9],
-                    "steering_coeff": 300.0,
-                    "control_norm_mode": "fixed",
-                    "control_scale_coeff": 1.0,
-                },
-            ),
-            "satimp": (
-                4.0e-6,
-                {"beta1": 2.0, "beta2": 0.1, "gamma": 1.0, "alpha": 0.0},
-            ),
-            "simnpo": (
-                1.0e-6,
-                {"beta": 0.1, "delta": 0.0, "gamma": 1.0, "alpha": 0.1},
-            ),
-            "token_npo": (1.0e-6, {"beta": 0.1, "gamma": 1.0}),
-            "token_simnpo": (
-                1.0e-6,
-                {"beta": 0.1, "delta": 0.0, "gamma": 1.0, "alpha": 0.1},
-            ),
-            "undial": (1.0e-6, {"beta": 3.0, "gamma": 1.0, "alpha": 0.0}),
-            "wga": (1.0e-6, {"beta": 0.5, "gamma": 1.0, "alpha": 0.0}),
-        }
-        root = REPO / "configs" / "training" / "megatron" / "interns2"
-        for algorithm, (learning_rate, algorithm_fields) in expected.items():
-            with self.subTest(algorithm=algorithm), (root / f"{algorithm}.yaml").open(
-                encoding="utf-8"
-            ) as handle:
-                config = yaml.safe_load(handle)
-            self.assertEqual(config["training"]["learning_rate"], learning_rate)
-            for field, value in algorithm_fields.items():
-                self.assertEqual(config["algorithm"][field], value)
 
 if __name__ == "__main__":
     unittest.main()
